@@ -7,22 +7,17 @@ import urllib.parse
 import folium
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from folium.plugins import LocateControl
 from shapely.geometry import box, mapping, shape
 from shapely.ops import unary_union
 from shapely.prepared import prep
 
-try:
-    from streamlit_folium import st_folium
 
-    def show_map(m, width=1200, height=650):
-        return st_folium(m, width=width, height=height, returned_objects=["last_clicked"])
-except ImportError:                                    # pragma: no cover
-    from streamlit_folium import folium_static
-
-    def show_map(m, width=1200, height=650):
-        folium_static(m, width=width, height=height)
-        return None
+def show_map(m, height=620):
+    """直接把 folium 生成的 HTML 塞进 iframe。
+    不用 st_folium：它依赖自定义组件的静态资源，云端装到别的版本组合时容易渲染成空白。"""
+    components.html(m._repr_html_(), height=height, scrolling=False)
 
 # ================= 1. 页面设置 =================
 st.set_page_config(page_title="北建大兴校区 · 生活服务可达性地图", page_icon="◧", layout="wide")
@@ -447,7 +442,7 @@ c2.markdown(f'<div class="stat"><b>{int((df["主题"] == "宜居").sum())} / '
 c3.markdown('<div class="stat"><b>15</b><span>个宿舍起点（1-11 号楼 + 硕博公寓 1-4）</span></div>',
             unsafe_allow_html=True)
 
-show_map(m, width=1240, height=620)
+show_map(m, height=620)
 
 with st.expander("各出行方式可达设施数量统计", expanded=True):
     pts_key = tuple((float(x), float(y)) for x, y in zip(shown["经度"], shown["纬度"]))
