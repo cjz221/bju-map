@@ -358,9 +358,10 @@ m.get_root().html.add_child(folium.Element(f"""
 <div id="lg">{legend}</div>"""))
 
 # ★ 自己实现定位（不依赖插件；按钮点击触发，兼容 iOS 的手势要求）
+# 注意：加进 get_root().script 的必须是「裸 JS」，不能再包 <script> 标签，
+# 否则会和 folium 自己的 <script> 嵌套，导致后面的 JS 被当成文字显示。
 map_name = m.get_name()
 m.get_root().script.add_child(folium.Element(f"""
-<script>
 (function () {{
   var tries = 0;
   var timer = setInterval(function () {{
@@ -412,9 +413,10 @@ m.get_root().script.add_child(folium.Element(f"""
       'border-radius:4px;font:12px Microsoft YaHei;max-width:90%;';
   }}, 200);
 }})();
-</script>"""))
+"""))
 
-components.html(m._repr_html_(), height=560, scrolling=False)
+# ★ 注意：必须用 get_root().render()，_repr_html_() 返回的是转义后的 HTML（会显示成文字）
+components.html(m.get_root().render(), height=560, scrolling=False)
 
 # ================= 6. 搜索选中的设施卡片（在 iframe 外，导航链接一定能点）=================
 if q.strip():
