@@ -25,14 +25,15 @@ st.set_page_config(page_title="北建大兴校区 · 生活服务可达性地图
 
 st.markdown("""
 <style>
-  /* 只隐藏 Deploy 菜单、页脚和顶部工具栏；保留 header 高度，否则侧边栏的"展开"按钮会被一起藏掉 */
-  #MainMenu, [data-testid="stToolbar"], footer {visibility: hidden; height: 0;}
-  header[data-testid="stHeader"] {background: transparent; height: 2.4rem;}
-  /* 侧边栏收起后的"展开"按钮必须可见、可点 */
+  /* 只藏"Deploy 菜单、汉堡菜单、页脚"，不动 header 本身：
+     header 里装着侧边栏的展开/收起按钮，藏了它按钮就没了 */
+  #MainMenu, [data-testid="stToolbar"], [data-testid="stDecoration"], footer {display: none !important;}
+  header[data-testid="stHeader"] {background: transparent; backdrop-filter: none;}
+  /* 万一某些版本的展开按钮被压住，强制放出来 */
   [data-testid="stSidebarCollapsedControl"],
-  [data-testid="stSidebarCollapseButton"] {visibility: visible !important; display: block !important;}
-  [data-testid="stSidebarCollapsedControl"] {position: fixed; top: .35rem; left: .35rem; z-index: 1000000;}
-  .block-container {padding: 1.0rem 1.6rem 2rem; max-width: 1600px;}
+  [data-testid="stSidebarCollapseButton"],
+  [data-testid="collapsedControl"] {display: block !important; visibility: visible !important; opacity: 1 !important;}
+  .block-container {padding: .8rem 1.6rem 2rem; max-width: 1600px;}
   html, body, [class*="css"] {font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", sans-serif;}
 
   .appbar {display:flex; align-items:center; gap:14px; padding:13px 20px; margin-bottom:14px;
@@ -139,7 +140,8 @@ def parse_cat(raw):
 
 
 def sec(title):
-    st.sidebar.markdown(f'<div class="side-title">{title}</div>', unsafe_allow_html=True)
+    """分组小标题（写到当前容器里，不再用 st.sidebar）"""
+    st.markdown(f'<div class="side-title">{title}</div>', unsafe_allow_html=True)
 
 
 # ================= 2. 数据 =================
@@ -243,48 +245,52 @@ df = pd.DataFrame(keep_rows)
 df[["主题", "细分"]] = df["一级分类"].apply(lambda v: pd.Series(parse_cat(v)))
 df = df[df["主题"].notna()].copy()
 
-sec("出行方式")
-sel_mode = st.sidebar.radio("出行方式", MODE_KEYS, index=0, horizontal=True,
-                            format_func=lambda m: MODE_LABEL[m], label_visibility="collapsed")
+# ===== 页面内左右分栏（不用 Streamlit 侧边栏，免得被收起后找不回来）=====
+left, right = st.columns([1, 3.15], gap="large")
 
-iso, iso_err, sel_time = None, None, None
-if sel_mode != "none":
-    try:
-        iso = load_iso(ISO_FILES[sel_mode])
-        if iso.get("schema") != "bucea-isochrone-v2":
-            raise ValueError("圈层文件版本不匹配")
-    except Exception as e:
-        iso_err = str(e)
-    sec("出行时间")
-    if iso is not None:
-        avail = list(iso.get("times", [5, 10, 15]))
-        if st.session_state.get("sel_time") not in avail:
-            st.session_state["sel_time"] = avail[-1]
-        sel_time = st.sidebar.radio("出行时间", avail, key="sel_time", horizontal=True,
-                                    format_func=lambda t: f"{t} 分钟",
-                                    label_visibility="collapsed")
-        if MODE_NOTE.get(sel_mode):
-            st.sidebar.markdown(f'<div class="hint">{MODE_NOTE[sel_mode]}</div>',
-                                unsafe_allow_html=True)
-    else:
-        st.sidebar.error(iso_err)
+with left:
+    sec("出行方式")
+    sel_mode = st.radio("出行方式", MODE_KEYS, index=0, horizontal=True,
+                        format_func=lambda m: MODE_LABEL[m], label_visibility="collapsed")
 
-sec("设施类别")
-picked = []
-for theme in THEME_ORDER:
-    sub = df[df["主题"] == theme]
-    on = st.sidebar.checkbox(f"{theme}（{len(sub)}）", value=True, key=f"th_{theme}")
-    if not on or sub.empty:
-        continue
-    subs = sorted(sub["细分"].unique().tolist())
-    if len(subs) > 1:
-        with st.sidebar.expander("细分", expanded=False):
-            for s in subs:
-                n = int((sub["细分"] == s).sum())
-                if st.checkbox(f"{s}（{n}）", value=True, key=f"sub_{theme}_{s}"):
-                    picked.append((theme, s))
-    else:
-        picked.extend([(theme, s) for s in subs])
+    iso, iso_err, sel_time = None, None, None
+    if sel_mode != "none":
+        try:
+            iso = load_iso(ISO_FILES[sel_mode])
+            if iso.get("schema") != "bucea-isochrone-v2":
+                raise ValueError("圈层文件版本不匹配")
+        except Exception as e:
+            iso_err = str(e)
+        sec("出行时间")
+        if iso is not None:
+            avail = list(iso.get("times", [5, 10, 15]))
+            if st.session_state.get("sel_time") not in avail:
+                st.session_state["sel_time"] = avail[-1]
+            sel_time = st.radio("出行时间", avail, key="sel_time", horizontal=True,
+                                format_func=lambda t: f"{t} 分钟",
+                                label_visibility="collapsed")
+            if MODE_NOTE.get(sel_mode):
+                st.markdown(f'<div class="hint">{MODE_NOTE[sel_mode]}</div>',
+                            unsafe_allow_html=True)
+        else:
+            st.error(iso_err)
+
+    sec("设施类别")
+    picked = []
+    for theme in THEME_ORDER:
+        sub = df[df["主题"] == theme]
+        on = st.checkbox(f"{theme}（{len(sub)}）", value=True, key=f"th_{theme}")
+        if not on or sub.empty:
+            continue
+        subs = sorted(sub["细分"].unique().tolist())
+        if len(subs) > 1:
+            with st.expander("细分", expanded=False):
+                for s in subs:
+                    n = int((sub["细分"] == s).sum())
+                    if st.checkbox(f"{s}（{n}）", value=True, key=f"sub_{theme}_{s}"):
+                        picked.append((theme, s))
+        else:
+            picked.extend([(theme, s) for s in subs])
 
 shown = df[df.apply(lambda r: (r["主题"], r["细分"]) in picked, axis=1)] if picked else df.iloc[0:0]
 
@@ -439,33 +445,34 @@ m.get_root().html.add_child(folium.Element(f"""
   {theme_legend}{iso_legend}
 </div>"""))
 
-# ================= 5. 主区域 =================
-c1, c2, c3 = st.columns(3)
-c1.markdown(f'<div class="stat"><b>{len(shown)}</b><span>当前显示设施</span></div>',
-            unsafe_allow_html=True)
-c2.markdown(f'<div class="stat"><b>{int((df["主题"] == "宜居").sum())} / '
-            f'{int((df["主题"] == "宜业").sum())} / {int((df["主题"] == "宜乐").sum())}</b>'
-            f'<span>宜居 / 宜业 / 宜乐</span></div>', unsafe_allow_html=True)
-c3.markdown('<div class="stat"><b>15</b><span>个宿舍起点（1-11 号楼 + 硕博公寓 1-4）</span></div>',
-            unsafe_allow_html=True)
+# ================= 5. 右侧主区域 =================
+with right:
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(f'<div class="stat"><b>{len(shown)}</b><span>当前显示设施</span></div>',
+                unsafe_allow_html=True)
+    c2.markdown(f'<div class="stat"><b>{int((df["主题"] == "宜居").sum())} / '
+                f'{int((df["主题"] == "宜业").sum())} / {int((df["主题"] == "宜乐").sum())}</b>'
+                f'<span>宜居 / 宜业 / 宜乐</span></div>', unsafe_allow_html=True)
+    c3.markdown('<div class="stat"><b>15</b><span>个宿舍起点（1-11 号楼 + 硕博公寓 1-4）</span></div>',
+                unsafe_allow_html=True)
 
-show_map(m, height=620)
+    show_map(m, height=620)
 
-with st.expander("各出行方式可达设施数量统计", expanded=True):
-    pts_key = tuple((float(x), float(y)) for x, y in zip(shown["经度"], shown["纬度"]))
-    rows = reach_table(pts_key, str(len(shown)))
-    if not rows:
-        st.markdown('<div class="hint">没有可统计的圈层数据。</div>', unsafe_allow_html=True)
-    else:
-        all_times = sorted({t for _, ts, _ in rows for t in ts})
-        head = "".join(f"<th>{t} 分钟</th>" for t in all_times)
-        body = ""
-        for label, times, cells in rows:
-            m_ = dict(zip(times, cells))
-            tds = "".join(f'<td class="num">{m_.get(t, "—")}</td>' for t in all_times)
-            body += f"<tr><td>{label}</td>{tds}</tr>"
-        st.markdown(f'<table class="clean"><tr><th>出行方式</th>{head}</tr>{body}</table>',
-                    unsafe_allow_html=True)
-        st.markdown('<div class="hint">统计口径：设施点位落在对应出行方式、对应时间档的可达圈内'
-                    '（步行/骑行/驾车为 5/10/15 分钟，公交为 30/45/60 分钟）。</div>',
-                    unsafe_allow_html=True)
+    with st.expander("各出行方式可达设施数量统计", expanded=True):
+        pts_key = tuple((float(x), float(y)) for x, y in zip(shown["经度"], shown["纬度"]))
+        rows = reach_table(pts_key, str(len(shown)))
+        if not rows:
+            st.markdown('<div class="hint">没有可统计的圈层数据。</div>', unsafe_allow_html=True)
+        else:
+            all_times = sorted({t for _, ts, _ in rows for t in ts})
+            head = "".join(f"<th>{t} 分钟</th>" for t in all_times)
+            body = ""
+            for label, times, cells in rows:
+                m_ = dict(zip(times, cells))
+                tds = "".join(f'<td class="num">{m_.get(t, "—")}</td>' for t in all_times)
+                body += f"<tr><td>{label}</td>{tds}</tr>"
+            st.markdown(f'<table class="clean"><tr><th>出行方式</th>{head}</tr>{body}</table>',
+                        unsafe_allow_html=True)
+            st.markdown('<div class="hint">统计口径：设施点位落在对应出行方式、对应时间档的可达圈内'
+                        '（步行/骑行/驾车为 5/10/15 分钟，公交为 30/45/60 分钟）。</div>',
+                        unsafe_allow_html=True)
