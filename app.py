@@ -336,14 +336,17 @@ for _, row in shown.iterrows():
              + (f'<div style="margin-top:5px;font-size:11.5px;color:#5b6673;">{note}</div>'
                 if note != "—" else "")
              + extra
-             + f'<div style="margin-top:8px;font-size:11px;color:#93a0ac;">'
-               f'想直接导航，请用下方搜索框选中该设施</div></div>')
+             + f'<a href="{nav_url(lon, lat, name)}" '
+               f"onclick=\"return jumpAmap(this.href);\" "
+               f'style="display:block;text-align:center;margin-top:9px;padding:9px 0;'
+               f'border-radius:5px;background:#1d5f96;color:#fff;text-decoration:none;'
+               f'font-size:13.5px;font-weight:600;">导航到这里</a></div>')
     folium.Marker([lat, lon], popup=folium.Popup(popup, max_width=250),
                   tooltip=f"{name}（{theme}·{sub}）",
                   icon=folium.Icon(color=THEME_FA_COLOR.get(theme, "gray"),
                                    icon=SUB_ICON.get(sub, "map-marker"), prefix="fa")).add_to(m)
 
-# 小图例
+# 小图例 + 我的位置（蓝点）样式
 legend = "".join(
     f'<div style="margin:2px 0;"><span style="display:inline-block;width:8px;height:8px;'
     f'background:{THEME_COLOR[t]};border-radius:1px;margin-right:6px;"></span>{t}</div>'
@@ -354,6 +357,17 @@ m.get_root().html.add_child(folium.Element(f"""
        padding:7px 10px;border:1px solid #e6e9ed;border-radius:5px;
        font:11px/1.55 'Microsoft YaHei',sans-serif;color:#33404d;}}
   @media (max-width:640px) {{ #lg {{font-size:10px;padding:5px 7px;bottom:7px;right:7px;}} }}
+
+  /* 我的位置：高德风格的蓝点 + 呼吸光晕 */
+  .medot {{ position:relative; width:16px; height:16px; border-radius:50%;
+           background:#1a73e8; border:3px solid #fff;
+           box-shadow:0 1px 5px rgba(26,115,232,.55); }}
+  .medot::after {{ content:''; position:absolute; left:-9px; top:-9px; width:28px; height:28px;
+                  border-radius:50%; background:rgba(26,115,232,.30);
+                  animation:mpulse 1.9s ease-out infinite; }}
+  @keyframes mpulse {{ 0% {{transform:scale(.45);opacity:.85}}
+                       70% {{transform:scale(1.5);opacity:0}}
+                       100% {{transform:scale(1.5);opacity:0}} }}
 </style>
 <div id="lg">{legend}</div>"""))
 
@@ -362,6 +376,13 @@ m.get_root().html.add_child(folium.Element(f"""
 # 否则会和 folium 自己的 <script> 嵌套，导致后面的 JS 被当成文字显示。
 map_name = m.get_name()
 m.get_root().script.add_child(folium.Element(f"""
+// 弹窗里的「导航到这里」：让最外层页面跳转，手机才能调起高德 App
+window.jumpAmap = function (u) {{
+  try {{ window.top.location.href = u; }}
+  catch (e) {{ try {{ window.open(u, '_blank'); }} catch (e2) {{ location.href = u; }} }}
+  return false;
+}};
+
 (function () {{
   var tries = 0;
   var timer = setInterval(function () {{
@@ -369,27 +390,31 @@ m.get_root().script.add_child(folium.Element(f"""
     if (!map || !map.locate) {{ if (++tries > 60) clearInterval(timer); return; }}
     clearInterval(timer);
 
-    var dot = L.divIcon({{iconSize: [18, 18], className: '', html:
-      '<div style="width:16px;height:16px;border-radius:50%;background:#c0392b;border:3px solid #fff;' +
-      'box-shadow:0 0 0 2px rgba(192,57,43,.45);"></div>'}});
+    var dot = L.divIcon({{iconSize: [16, 16], className: '',
+                          html: '<div class="medot"></div>'}});
     var marker = null, circle = null, first = true;
 
     map.on('locationfound', function (e) {{
       if (!marker) {{
-        circle = L.circle(e.latlng, {{radius: e.accuracy || 60, color: '#c0392b', weight: 1,
-                                      fillColor: '#c0392b', fillOpacity: 0.12}}).addTo(map);
+        circle = L.circle(e.latlng, {{radius: e.accuracy || 60, color: '#1a73e8', weight: 1,
+                                      fillColor: '#1a73e8', fillOpacity: 0.12}}).addTo(map);
         marker = L.marker(e.latlng, {{icon: dot, zIndexOffset: 1200}}).addTo(map)
                   .bindTooltip('我的位置', {{permanent: false}});
       }} else {{
         marker.setLatLng(e.latlng);
         circle.setLatLng(e.latlng).setRadius(e.accuracy || 60);
       }}
+      var t = document.getElementById('locmsg');
+      if (t) {{ t.style.display = 'none'; }}
       if (first) {{ map.setView(e.latlng, Math.max(map.getZoom(), 16)); first = false; }}
     }});
     map.on('locationerror', function (e) {{
       var t = document.getElementById('locmsg');
-      if (t) {{ t.style.display = 'block';
-               t.innerText = '定位失败：' + (e.message || '未知原因') + '。请允许定位权限，或用 https 打开。'; }}
+      if (t) {{
+        t.style.display = 'block';
+        t.innerText = '定位失败：' + (e.message || '未知原因') +
+                      '　请允许浏览器定位权限，并用 https 打开本页。';
+      }}
     }});
 
     var ctl = L.control({{position: 'topleft'}});
@@ -411,6 +436,11 @@ m.get_root().script.add_child(folium.Element(f"""
     msg.style.cssText = 'display:none;position:absolute;left:50%;top:10px;transform:translateX(-50%);' +
       'z-index:9999;background:#fff3f0;border:1px solid #f0b8ad;color:#a33a26;padding:6px 10px;' +
       'border-radius:4px;font:12px Microsoft YaHei;max-width:90%;';
+
+    // ★ 打开页面就自动定位一次（不需要点任何按钮）
+    setTimeout(function () {{
+      map.locate({{enableHighAccuracy: true, timeout: 20000, watch: true, setView: true}});
+    }}, 600);
   }}, 200);
 }})();
 """))
