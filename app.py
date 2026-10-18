@@ -20,11 +20,18 @@ def show_map(m, height=620):
     components.html(m._repr_html_(), height=height, scrolling=False)
 
 # ================= 1. 页面设置 =================
-st.set_page_config(page_title="北建大兴校区 · 生活服务可达性地图", page_icon="◧", layout="wide")
+st.set_page_config(page_title="北建大兴校区 · 生活服务可达性地图", page_icon="◧",
+                   layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
-  #MainMenu, header[data-testid="stHeader"], footer {visibility: hidden; height: 0;}
+  /* 只隐藏 Deploy 菜单、页脚和顶部工具栏；保留 header 高度，否则侧边栏的"展开"按钮会被一起藏掉 */
+  #MainMenu, [data-testid="stToolbar"], footer {visibility: hidden; height: 0;}
+  header[data-testid="stHeader"] {background: transparent; height: 2.4rem;}
+  /* 侧边栏收起后的"展开"按钮必须可见、可点 */
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="stSidebarCollapseButton"] {visibility: visible !important; display: block !important;}
+  [data-testid="stSidebarCollapsedControl"] {position: fixed; top: .35rem; left: .35rem; z-index: 1000000;}
   .block-container {padding: 1.0rem 1.6rem 2rem; max-width: 1600px;}
   html, body, [class*="css"] {font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", sans-serif;}
 
