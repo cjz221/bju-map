@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+"""北建大兴校区 · 生活服务可达性地图（移动端优先）"""
 import json
 import math
 import os
@@ -8,86 +10,76 @@ import folium
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from folium.plugins import LocateControl
 from shapely.geometry import box, mapping, shape
 from shapely.ops import unary_union
 from shapely.prepared import prep
 
-
-def show_map(m, height=620):
-    """直接把 folium 生成的 HTML 塞进 iframe。
-    不用 st_folium：它依赖自定义组件的静态资源，云端装到别的版本组合时容易渲染成空白。"""
-    components.html(m._repr_html_(), height=height, scrolling=False)
-
 # ================= 1. 页面设置 =================
-st.set_page_config(page_title="北建大兴校区 · 生活服务可达性地图", page_icon="◧",
-                   layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="北建大 · 生活服务地图", page_icon="◧",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-  /* 只藏 Deploy 菜单 / 汉堡菜单 / 页脚 */
   #MainMenu, [data-testid="stToolbar"], [data-testid="stDecoration"], footer {display: none !important;}
-  header[data-testid="stHeader"] {background: transparent; backdrop-filter: none;}
-  .block-container {padding: .6rem 1.4rem 2rem; max-width: 1200px;}
-  html, body, [class*="css"] {font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", sans-serif;}
+  header[data-testid="stHeader"] {background: transparent;}
+  .block-container {padding: .5rem 1.1rem 1.6rem; max-width: 1200px;}
+  html, body, [class*="css"] {font-family: "Microsoft YaHei", "PingFang SC", sans-serif;}
 
-  /* 顶部标题条：手机上自动变小、副标题隐藏 */
-  .appbar {display:flex; align-items:center; gap:14px; padding:12px 18px; margin-bottom:10px;
-           background:linear-gradient(100deg,#0f3a63 0%,#1d5f96 100%);
-           border-radius:7px; color:#fff;}
-  .appbar .mark {flex:0 0 auto; width:36px; height:36px; border-radius:5px;
-                 background:rgba(255,255,255,.15); display:flex; align-items:center;
-                 justify-content:center; font-size:14px; font-weight:700; letter-spacing:.5px;}
-  .appbar h1 {font-size:17px; margin:0; font-weight:600; letter-spacing:.4px; line-height:1.35;}
-  .appbar p {margin:3px 0 0; font-size:12px; opacity:.82; line-height:1.5;}
+  /* 顶部标题条：一行，很矮 */
+  .bar {display:flex; align-items:center; gap:10px; padding:8px 14px; margin-bottom:8px;
+        background:linear-gradient(100deg,#0f3a63,#1d5f96); border-radius:6px; color:#fff;}
+  .bar .m {width:30px; height:30px; border-radius:4px; background:rgba(255,255,255,.16);
+           display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700;}
+  .bar h1 {font-size:15px; margin:0; font-weight:600; letter-spacing:.3px;}
+  .bar small {display:block; font-size:11px; opacity:.8; margin-top:1px;}
 
-  .side-title {font-size:11.5px; font-weight:600; color:#5c6874; letter-spacing:1.6px;
-               margin:12px 0 6px; padding-bottom:5px; border-bottom:1px solid #e6e9ed;}
+  /* 控件区：紧凑 */
+  .lbl {font-size:11px; font-weight:600; color:#68737e; letter-spacing:1.2px; margin:6px 0 2px;}
 
-  .statbar {display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline;
-            background:#f7f9fb; border:1px solid #e6e9ed; border-radius:6px;
-            padding:8px 12px; margin:10px 0; font-size:12.5px; color:#41505f;}
-  .statbar b {color:#0f3a63; font-size:15px; font-weight:600;}
-  .statbar span.sep {color:#cfd6de;}
-
-  table.clean {border-collapse:collapse; width:100%; font-size:12.5px; margin-top:4px;}
-  table.clean th {background:#f1f4f7; color:#41505f; text-align:left; padding:7px 10px;
+  /* 设施卡片 */
+  .card {border:1px solid #e6e9ed; border-radius:7px; padding:11px 13px; margin-top:8px;
+         background:#fff; box-shadow:0 1px 3px rgba(15,58,99,.06);}
+  .card .t {font-size:15px; font-weight:600; color:#22303d; margin-bottom:6px;}
+  .card .r {font-size:12.5px; color:#4a5763; line-height:1.85;}
+  .card .r b {color:#8a95a1; font-weight:500; display:inline-block; min-width:44px;}
+  .navbtn {display:block; text-align:center; padding:10px 0; margin-top:10px; border-radius:6px;
+           background:#1d5f96; color:#fff !important; text-decoration:none; font-size:14px;
+           font-weight:600; letter-spacing:.5px;}
+  .hint {font-size:11px; color:#93a0ac; line-height:1.6;}
+  table.clean {border-collapse:collapse; width:100%; font-size:12.5px;}
+  table.clean th {background:#f1f4f7; color:#41505f; text-align:left; padding:6px 9px;
                   font-weight:600; border-bottom:1px solid #dde3e9; white-space:nowrap;}
-  table.clean td {padding:6px 10px; border-bottom:1px solid #eef1f4; color:#33404d;}
-  table.clean tr:last-child td {border-bottom:none;}
+  table.clean td {padding:5px 9px; border-bottom:1px solid #eef1f4;}
   table.clean td.num {text-align:right; font-variant-numeric:tabular-nums;}
-  .hint {font-size:11.5px; color:#8a95a1; line-height:1.7;}
 
-  /* ===== 手机端适配 ===== */
   @media (max-width: 640px) {
-    .block-container {padding: .4rem .7rem 1.6rem;}
-    .appbar {padding:9px 12px; gap:10px; margin-bottom:8px;}
-    .appbar .mark {width:30px; height:30px; font-size:12px;}
-    .appbar h1 {font-size:15px;}
-    .appbar p {display:none;}
-    .side-title {margin:9px 0 4px; font-size:11px;}
-    .statbar {font-size:11.5px; padding:6px 10px; gap:4px 10px;}
-    .statbar b {font-size:13.5px;}
-    table.clean th, table.clean td {padding:5px 6px; font-size:11.5px;}
-    /* 单选框/复选框的行距收紧 */
-    [data-testid="stRadio"] > div, [data-testid="stCheckbox"] {gap:.15rem;}
-    [data-testid="stRadio"] label p, [data-testid="stCheckbox"] label p {font-size:13px;}
+    .block-container {padding: .3rem .6rem 1.2rem;}
+    .bar {padding:6px 10px; gap:8px; margin-bottom:6px;}
+    .bar .m {width:26px; height:26px; font-size:10px;}
+    .bar h1 {font-size:13.5px;}
+    .bar small {display:none;}
+    .lbl {margin:4px 0 1px; font-size:10.5px;}
+    /* 单选行再紧凑一点 */
+    [data-testid="stRadio"] > div {gap:.1rem;}
+    [data-testid="stRadio"] label p {font-size:13px;}
+    [data-testid="stTextInput"] input {font-size:13px;}
+    table.clean th, table.clean td {padding:4px 6px; font-size:11.5px;}
   }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
-<div class="appbar">
-  <div class="mark">BUCEA</div>
-  <div>
-    <h1>北建大兴校区 · 生活服务可达性地图</h1>
-    <p>以 15 栋宿舍为起点，按真实路网计算步行 / 骑行 / 驾车 / 公交的可达范围，并统计范围内公共设施数量</p>
-  </div>
+<div class="bar">
+  <div class="m">BUCEA</div>
+  <h1>北建大兴校区 · 生活服务可达性地图
+    <small>以 15 栋宿舍为起点，按真实路网计算可达范围与设施数量</small>
+  </h1>
 </div>
 """, unsafe_allow_html=True)
 
+# ================= 2. 常量 =================
 ISO_STYLE = "smooth"
-DATA_FILES = ("bju_poi.xlsx", "poi_core.xlsx")        # 校内精细标注 + 周边重点场所
+DATA_FILES = ("bju_poi.xlsx", "poi_core.xlsx")
 
 
 def iso_path(mode):
@@ -100,14 +92,8 @@ def iso_path(mode):
 
 MODE_LABEL = {"walk": "步行", "bike": "骑行", "drive": "驾车", "bus": "公交"}
 MODE_COLOR = {"walk": "#1f6fb2", "bike": "#2a8f7f", "drive": "#6b4fa8", "bus": "#c05621"}
-MODE_KEYS = ["walk", "bike", "drive", "bus"]
-ISO_MODES = ["walk", "bike", "drive", "bus"]
-MODE_NOTE = {
-    "walk": "1.2 m/s（4.3 km/h）",
-    "bike": "13.3 km/h，按高德实测标定",
-    "drive": "均速 22.8 km/h，按高德实测标定",
-    "bus": "候车 20 分钟 + 车速 25 km/h",
-}
+MODE_KEYS = list(MODE_LABEL)
+ISO_MODES = list(MODE_LABEL)
 ISO_FILES = {m: iso_path(m) for m in ISO_MODES}
 SCAPE_FILE = iso_path("drive")
 
@@ -125,16 +111,18 @@ SUB_ICON = {"餐饮": "cutlery", "交通": "bus", "服务": "info-sign", "医疗
             "购物": "shopping-cart", "综合": "home", "学习": "book",
             "运动": "futbol-o", "休闲": "coffee", "活动": "star"}
 AMAP_SRC = urllib.parse.quote("i北建大")
+STD_COLS = {"id", "名称", "一级分类", "所在楼宇/区域", "经度", "纬度", "坐标系", "地址",
+            "开放时间", "电话", "适用人群", "数据来源", "备注", "_来源文件", "主题", "细分"}
+
+
+def nav_url(lon, lat, name):
+    return (f"https://uri.amap.com/navigation?to={lon:.6f},{lat:.6f},"
+            f"{urllib.parse.quote(str(name))}&src={AMAP_SRC}&coordinate=gaode&callnative=1")
 
 
 def nav_button(lon, lat, name):
-    nm = urllib.parse.quote(str(name))
-    url = (f"https://uri.amap.com/navigation?to={lon:.6f},{lat:.6f},{nm}"
-           f"&src={AMAP_SRC}&coordinate=gaode&callnative=1")
-    return (f'<a href="{url}" target="_blank" rel="noopener" style="display:block;'
-            f'text-align:center;padding:7px 0;margin-top:10px;border-radius:5px;'
-            f'background:#1d5f96;color:#fff;text-decoration:none;font-size:13px;'
-            f'letter-spacing:.5px;">导航到这里</a>')
+    return (f'<a class="navbtn" href="{nav_url(lon, lat, name)}" target="_blank" '
+            f'rel="noopener">导航到这里</a>')
 
 
 def parse_cat(raw):
@@ -151,15 +139,10 @@ def parse_cat(raw):
     return None, None
 
 
-def sec(title):
-    """分组小标题（写到当前容器里，不再用 st.sidebar）"""
-    st.markdown(f'<div class="side-title">{title}</div>', unsafe_allow_html=True)
-
-
-# ================= 2. 数据 =================
+# ================= 3. 数据 =================
 @st.cache_data
 def load_data(files):
-    frames, counts = [], {}
+    frames = []
     for f in files:
         if not os.path.exists(f):
             continue
@@ -168,15 +151,10 @@ def load_data(files):
             d.columns = d.columns.str.strip()
             d["经度"] = pd.to_numeric(d["经度"], errors="coerce")
             d["纬度"] = pd.to_numeric(d["纬度"], errors="coerce")
-            d = d.dropna(subset=["经度", "纬度"])
-            d["_来源文件"] = f
-            frames.append(d)
-            counts[f] = len(d)
+            frames.append(d.dropna(subset=["经度", "纬度"]))
         except Exception:
             continue
-    if not frames:
-        return None, {}
-    return pd.concat(frames, ignore_index=True), counts
+    return pd.concat(frames, ignore_index=True) if frames else None
 
 
 @st.cache_data
@@ -192,20 +170,18 @@ def band_of(gj, t):
 
 
 @st.cache_data
-def bright_and_mask(mode_file, mode_time, scape_file, scape_time, half=0.4, simplify=1e-5):
+def bright_and_mask(mode_file, mode_time, scape_file, scape_time, half=0.4):
     m, s = load_iso(mode_file), load_iso(scape_file)
     sel, scape = band_of(m, mode_time), band_of(s, scape_time)
-    bbox = box(116.286 - half, 39.748 - half, 116.286 + half, 39.748 + half)
     if sel is None:
         return None, None
-    bright = unary_union([g for g in (scape, sel) if g is not None])
-    bright = bright.simplify(simplify, preserve_topology=True)
+    bbox = box(116.286 - half, 39.748 - half, 116.286 + half, 39.748 + half)
+    bright = unary_union([g for g in (scape, sel) if g is not None]).simplify(1e-5, True)
     return mapping(bright), mapping(bbox.difference(bright))
 
 
 @st.cache_data
-def reach_table(points, dataset_key):
-    """各方式各时间档能覆盖多少设施（点在面内判定）"""
+def reach_table(points, key):
     from shapely.geometry import Point
     pts = [Point(float(x), float(y)) for x, y in points]
     rows = []
@@ -217,24 +193,15 @@ def reach_table(points, dataset_key):
         cells = []
         for t in gj.get("times", []):
             b = band_of(gj, t)
-            if b is None:
-                cells.append(None)
-                continue
-            p = prep(b)
-            cells.append(sum(1 for pt in pts if p.contains(pt)))
+            cells.append(None if b is None else sum(1 for p in pts if prep(b).contains(p)))
         rows.append((MODE_LABEL[mode], list(gj.get("times", [])), cells))
     return rows
 
 
-# ================= 3. 侧边栏 =================
-df_raw, src_count = load_data(DATA_FILES)
+df_raw = load_data(DATA_FILES)
 if df_raw is None:
     st.error("数据读取失败：请确认 bju_poi.xlsx 与 poi_core.xlsx 在同一目录。")
     st.stop()
-
-# 表格里除标准字段以外的列，都会作为「属性卡片」显示在弹窗里
-STD_COLS = {"id", "名称", "一级分类", "所在楼宇/区域", "经度", "纬度", "坐标系", "地址",
-            "开放时间", "电话", "适用人群", "数据来源", "备注", "_来源文件", "主题", "细分"}
 EXTRA_COLS = [c for c in df_raw.columns if c not in STD_COLS]
 
 df = df_raw.copy()
@@ -242,8 +209,7 @@ keep_rows = []
 for _, r in df.iterrows():
     dup = False
     for k in keep_rows:
-        dx = abs(r["经度"] - k["经度"]) * 85000
-        dy = abs(r["纬度"] - k["纬度"]) * 111000
+        dx, dy = abs(r["经度"] - k["经度"]) * 85000, abs(r["纬度"] - k["纬度"]) * 111000
         if dx * dx + dy * dy > 80 ** 2:
             continue
         a, b = str(k["名称"]).strip(), str(r["名称"]).strip()
@@ -257,74 +223,41 @@ df = pd.DataFrame(keep_rows)
 df[["主题", "细分"]] = df["一级分类"].apply(lambda v: pd.Series(parse_cat(v)))
 df = df[df["主题"].notna()].copy()
 
-# ===== 移动优先：单列布局（控件在上、地图紧跟，避免手机上被挤到最下面）=====
-sec("出行方式")
-sel_mode = st.radio("出行方式", MODE_KEYS, index=0, horizontal=True,
-                    format_func=lambda m: MODE_LABEL[m], label_visibility="collapsed")
-
-iso, iso_err, sel_time = None, None, None
-if sel_mode != "none":
+# ================= 4. 顶部控件（3 行）=================
+c1, c2 = st.columns([1, 1], gap="small")
+with c1:
+    st.markdown('<div class="lbl">出行方式</div>', unsafe_allow_html=True)
+    sel_mode = st.radio("出行方式", MODE_KEYS, index=0, horizontal=True,
+                        format_func=lambda m: MODE_LABEL[m], label_visibility="collapsed")
+with c2:
+    st.markdown('<div class="lbl">出行时间</div>', unsafe_allow_html=True)
     try:
         iso = load_iso(ISO_FILES[sel_mode])
-        if iso.get("schema") != "bucea-isochrone-v2":
-            raise ValueError("圈层文件版本不匹配")
-    except Exception as e:
-        iso_err = str(e)
-    sec("出行时间")
-    if iso is not None:
         avail = list(iso.get("times", [5, 10, 15]))
-        if st.session_state.get("sel_time") not in avail:
-            st.session_state["sel_time"] = avail[-1]
-        sel_time = st.radio("出行时间", avail, key="sel_time", horizontal=True,
-                            format_func=lambda t: f"{t} 分钟",
-                            label_visibility="collapsed")
-    else:
-        st.error(iso_err)
+    except Exception:
+        iso, avail = None, [5, 10, 15]
+    if st.session_state.get("sel_time") not in avail:
+        st.session_state["sel_time"] = avail[-1]
+    sel_time = st.radio("出行时间", avail, key="sel_time", horizontal=True,
+                        format_func=lambda t: f"{t} 分钟", label_visibility="collapsed")
 
-picked = []
-with st.expander("设施类别", expanded=True):
-    for theme in THEME_ORDER:
-        sub = df[df["主题"] == theme]
-        on = st.checkbox(f"{theme}（{len(sub)}）", value=True, key=f"th_{theme}")
-        if not on or sub.empty:
-            continue
-        subs = sorted(sub["细分"].unique().tolist())
-        if len(subs) > 1:
-            with st.expander("细分", expanded=False):
-                for s in subs:
-                    n = int((sub["细分"] == s).sum())
-                    if st.checkbox(f"{s}（{n}）", value=True, key=f"sub_{theme}_{s}"):
-                        picked.append((theme, s))
-        else:
-            picked.extend([(theme, s) for s in subs])
+st.markdown('<div class="lbl">设施类别</div>', unsafe_allow_html=True)
+theme_pick = st.radio("设施类别", ["全部"] + THEME_ORDER, index=0, horizontal=True,
+                      label_visibility="collapsed")
+shown = df if theme_pick == "全部" else df[df["主题"] == theme_pick]
+shown = shown.copy()
 
-shown = df[df.apply(lambda r: (r["主题"], r["细分"]) in picked, axis=1)] if picked else df.iloc[0:0]
+st.markdown('<div class="lbl">搜索</div>', unsafe_allow_html=True)
+q = st.text_input("搜索", placeholder="输入设施名称，例如 图书馆 / 荟聚 / 游泳馆",
+                  label_visibility="collapsed")
 
-# 紧凑信息条（替代原来三张卡，手机上不占高度）
-st.markdown(
-    '<div class="statbar">'
-    f'<span><b>{len(shown)}</b> 个设施</span><span class="sep">|</span>'
-    f'<span>宜居 <b>{int((df["主题"] == "宜居").sum())}</b></span>'
-    f'<span>宜业 <b>{int((df["主题"] == "宜业").sum())}</b></span>'
-    f'<span>宜乐 <b>{int((df["主题"] == "宜乐").sum())}</b></span>'
-    '<span class="sep">|</span><span>15 栋宿舍起点</span>'
-    '</div>', unsafe_allow_html=True)
-
-# ================= 4. 地图 =================
+# ================= 5. 地图 =================
 m = folium.Map(location=[39.748, 116.286], zoom_start=13 if sel_mode == "bus" else 14,
                tiles='https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8'
-                     '&x={x}&y={y}&z={z}',
-               attr='高德地图')
-
-# ★ 一打开就自动定位（浏览器会弹权限请求）；左上角按钮可再次定位
-LocateControl(auto_start=True, position="topleft", flyTo=True, keepCurrentZoomLevel=False,
-              draw_circle=True, marker_class="fa fa-user-circle", marker_size=(26, 26),
-              locateOptions={"enableHighAccuracy": True, "watch": True, "maximumAge": 0,
-                             "timeout": 20000, "setView": "untilPanOrZoom"},
-              strings={"title": "定位我的位置", "popup": "我的位置", "metersUnit": "米"}).add_to(m)
+                     '&x={x}&y={y}&z={z}', attr='高德地图')
 
 scape_time = None
-if iso is not None and sel_time is not None:
+if iso is not None:
     try:
         scape_time = max(list(load_iso(SCAPE_FILE).get("times", [15])))
     except Exception:
@@ -332,15 +265,7 @@ if iso is not None and sel_time is not None:
     _, mask = bright_and_mask(ISO_FILES[sel_mode], sel_time, SCAPE_FILE, scape_time)
     if mask is not None:
         folium.GeoJson(data=mask, style_function=lambda x: {
-            'fillColor': '#10202f', 'color': '#10202f', 'weight': 0, 'fillOpacity': 0.62}).add_to(m)
-    if scape_time is not None:
-        folium.GeoJson(
-            data={"type": "FeatureCollection", "features": [{
-                "type": "Feature", "properties": {},
-                "geometry": mapping(band_of(load_iso(SCAPE_FILE), scape_time))}]},
-            style_function=lambda x: {'fillColor': '#ffffff', 'color': '#7c8894',
-                                      'weight': 1.4, 'fillOpacity': 0.05, 'dashArray': '7,6'},
-            tooltip=f"亮区范围：驾车 {scape_time} 分钟").add_to(m)
+            'fillColor': '#10202f', 'color': '#10202f', 'weight': 0, 'fillOpacity': 0.60}).add_to(m)
     for other in ISO_MODES:
         if other == sel_mode:
             continue
@@ -357,7 +282,7 @@ if iso is not None and sel_time is not None:
             data={"type": "FeatureCollection", "features": [{
                 "type": "Feature", "properties": {}, "geometry": mapping(geom)}]},
             style_function=lambda x, c=MODE_COLOR[other]: {
-                'fillColor': c, 'color': c, 'weight': 1.4, 'fillOpacity': 0, 'dashArray': '5,4'},
+                'fillColor': c, 'color': c, 'weight': 1.3, 'fillOpacity': 0, 'dashArray': '5,4'},
             tooltip=f"{MODE_LABEL[other]} {sel_time} 分钟").add_to(m)
     sel_geom = band_of(iso, sel_time)
     if sel_geom is not None:
@@ -366,9 +291,8 @@ if iso is not None and sel_time is not None:
                 "type": "Feature", "properties": {}, "geometry": mapping(sel_geom)}]},
             style_function=lambda x: {'fillColor': MODE_COLOR[sel_mode], 'color': MODE_COLOR[sel_mode],
                                       'weight': 2.0, 'fillOpacity': 0.30},
-            tooltip=f"{MODE_LABEL[sel_mode]} {sel_time} 分钟可达（15 栋宿舍合并）").add_to(m)
+            tooltip=f"{MODE_LABEL[sel_mode]} {sel_time} 分钟可达").add_to(m)
 
-# ===== 我的位置：由 LocateControl 自动定位并在地图上显示 =====
 DORMS = {"1号楼": (39.749687, 116.283006), "2号楼": (39.749694, 116.284058),
          "3号楼": (39.750094, 116.282957), "4号楼": (39.750106, 116.284042),
          "5号楼": (39.750516, 116.282885), "6号楼": (39.748431, 116.288781),
@@ -389,104 +313,160 @@ for _, row in shown.iterrows():
     def val(col, default="—"):
         return row[col] if col in row and pd.notna(row[col]) else default
 
-    rows_html = "".join(
-        f'<tr><td style="color:#7b8794;padding:2px 8px 2px 0;white-space:nowrap;">{k}</td>'
-        f'<td style="padding:2px 0;">{v}</td></tr>'
-        for k, v in [("类别", f"{theme} / {sub}"), ("位置", val("所在楼宇/区域", "未知")),
-                     ("时间", val("开放时间")), ("电话", val("电话", "无")),
-                     ("地址", val("地址", "未提供"))])
-
-    # ★ 表格里自定义的列（例如「楼层分布」「容纳人数」「图片」）自动变成属性卡片
-    extra_html = ""
-    for col in EXTRA_COLS:
-        v = row.get(col)
-        if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() in ("", "nan", "None"):
+    lines = [f"{k}：{v}" for k, v in [("类别", f"{theme} / {sub}"),
+                                     ("位置", val("所在楼宇/区域", "未知")),
+                                     ("时间", val("开放时间")), ("电话", val("电话", "无")),
+                                     ("地址", val("地址", "未提供"))] if v not in ("—", "")]
+    extra = ""
+    for c in EXTRA_COLS:
+        v = row.get(c)
+        if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() in ("", "nan"):
             continue
-        txt = str(v).strip()
-        if col in ("图片", "照片", "图片链接") and txt.startswith("http"):
-            extra_html += (f'<div style="margin-top:7px;"><img src="{txt}" '
-                           f'style="width:100%;border-radius:4px;"></div>')
-            continue
-        if "|" in txt:
-            txt = "<br>".join(t.strip() for t in txt.split("|") if t.strip())
-        extra_html += (
-            f'<div style="margin-top:6px;padding:6px 8px;background:#f6f8fa;'
-            f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
-            f'<div style="font-size:11px;color:#8a95a1;margin-bottom:2px;">{col}</div>'
-            f'<div style="font-size:12px;color:#33404d;line-height:1.6;">{txt}</div></div>')
-
+        txt = "·".join(t.strip() for t in str(v).split("|") if t.strip())
+        extra += (f'<div style="margin-top:5px;padding:5px 7px;background:#f6f8fa;'
+                  f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
+                  f'<div style="font-size:10.5px;color:#8a95a1;">{c}</div>'
+                  f'<div style="font-size:12px;color:#33404d;line-height:1.55;">{txt}</div></div>')
     note = val("备注", "")
-    note_html = f'<p style="margin:6px 0 0;color:#5b6673;font-size:12px;">{note}</p>' if note != "—" else ""
-    popup_html = f"""
-    <div style="width:236px; font-family:'Microsoft YaHei',sans-serif;">
-      <div style="border-left:3px solid {THEME_COLOR.get(theme, '#5b6673')}; padding-left:8px;">
-        <div style="font-size:14px; font-weight:600; color:#22303d;">{name}</div>
-      </div>
-      <table style="width:100%; font-size:12px; color:#33404d; border-collapse:collapse;
-                    margin-top:7px; font-family:inherit;">{rows_html}</table>
-      {note_html}{extra_html}
-      {nav_button(lon, lat, name)}
-    </div>"""
-    folium.Marker(
-        location=[lat, lon],
-        popup=folium.Popup(popup_html, max_width=280),
-        tooltip=f"{name}（{theme}·{sub}）",
-        icon=folium.Icon(color=THEME_FA_COLOR.get(theme, "gray"),
-                         icon=SUB_ICON.get(sub, "map-marker"), prefix="fa")).add_to(m)
+    popup = (f'<div style="width:210px;font-family:\'Microsoft YaHei\',sans-serif;">'
+             f'<div style="border-left:3px solid {THEME_COLOR.get(theme, "#5b6673")};padding-left:7px;'
+             f'font-size:13.5px;font-weight:600;color:#22303d;">{name}</div>'
+             f'<div style="font-size:11.5px;color:#4a5763;line-height:1.7;margin-top:6px;">'
+             + "<br>".join(lines) + f'</div>'
+             + (f'<div style="margin-top:5px;font-size:11.5px;color:#5b6673;">{note}</div>'
+                if note != "—" else "")
+             + extra
+             + f'<div style="margin-top:8px;font-size:11px;color:#93a0ac;">'
+               f'想直接导航，请用下方搜索框选中该设施</div></div>')
+    folium.Marker([lat, lon], popup=folium.Popup(popup, max_width=250),
+                  tooltip=f"{name}（{theme}·{sub}）",
+                  icon=folium.Icon(color=THEME_FA_COLOR.get(theme, "gray"),
+                                   icon=SUB_ICON.get(sub, "map-marker"), prefix="fa")).add_to(m)
 
-# 图例（右下角，低调一些）
-theme_legend = "".join(
-    f'<div style="margin:3px 0;"><span style="display:inline-block;width:9px;height:9px;'
-    f'background:{THEME_COLOR[t]};border-radius:1px;margin-right:7px;"></span>{t}</div>'
+# 小图例
+legend = "".join(
+    f'<div style="margin:2px 0;"><span style="display:inline-block;width:8px;height:8px;'
+    f'background:{THEME_COLOR[t]};border-radius:1px;margin-right:6px;"></span>{t}</div>'
     for t in THEME_ORDER)
-if sel_mode == "none":
-    iso_legend = '<div style="margin-top:7px;padding-top:6px;border-top:1px solid #e6e9ed;' \
-                 'color:#8a95a1;">未显示可达圈</div>'
-else:
-    time_txt = f"{sel_time} 分钟" if sel_time else "—"
-    others = "".join(
-        f'<div style="margin:3px 0;"><span style="display:inline-block;width:13px;'
-        f'border-top:1.5px dashed {MODE_COLOR[o]};margin-right:7px;vertical-align:middle;"></span>'
-        f'{MODE_LABEL[o]} {time_txt}</div>' for o in ISO_MODES if o != sel_mode)
-    iso_legend = (
-        '<div style="margin-top:7px;padding-top:6px;border-top:1px solid #e6e9ed;">'
-        f'<div style="margin:3px 0;"><span style="display:inline-block;width:9px;height:9px;'
-        f'background:{MODE_COLOR[sel_mode]};opacity:.65;border-radius:1px;margin-right:7px;">'
-        f'</span>{MODE_LABEL[sel_mode]} {time_txt}</div>{others}</div>')
 m.get_root().html.add_child(folium.Element(f"""
 <style>
-  #lg {{ position:fixed; bottom:16px; right:16px; z-index:9999; background:rgba(255,255,255,.94);
-        padding:9px 12px; border:1px solid #e6e9ed; border-radius:6px;
-        font:12px/1.6 'Microsoft YaHei',sans-serif; color:#33404d;
-        box-shadow:0 1px 4px rgba(15,58,99,.10); max-width:150px; }}
-  @media (max-width: 640px) {{
-    #lg {{ font-size:10.5px; padding:5px 7px; bottom:8px; right:8px; max-width:104px; line-height:1.45; }}
-    #lg .lg-t {{ display:none; }}
-  }}
+  #lg {{position:fixed;bottom:12px;right:12px;z-index:9999;background:rgba(255,255,255,.93);
+       padding:7px 10px;border:1px solid #e6e9ed;border-radius:5px;
+       font:11px/1.55 'Microsoft YaHei',sans-serif;color:#33404d;}}
+  @media (max-width:640px) {{ #lg {{font-size:10px;padding:5px 7px;bottom:7px;right:7px;}} }}
 </style>
-<div id="lg">
-  <div class="lg-t" style="font-weight:600;color:#41505f;margin-bottom:3px;">图例</div>
-  {theme_legend}{iso_legend}
-</div>"""))
+<div id="lg">{legend}</div>"""))
 
-# ================= 5. 地图 + 统计表 =================
-show_map(m, height=560)
+# ★ 自己实现定位（不依赖插件；按钮点击触发，兼容 iOS 的手势要求）
+map_name = m.get_name()
+m.get_root().script.add_child(folium.Element(f"""
+<script>
+(function () {{
+  var tries = 0;
+  var timer = setInterval(function () {{
+    var map = window["{map_name}"];
+    if (!map || !map.locate) {{ if (++tries > 60) clearInterval(timer); return; }}
+    clearInterval(timer);
 
-with st.expander("各出行方式可达设施数量统计", expanded=False):
-    pts_key = tuple((float(x), float(y)) for x, y in zip(shown["经度"], shown["纬度"]))
-    rows = reach_table(pts_key, str(len(shown)))
-    if not rows:
-        st.markdown('<div class="hint">没有可统计的圈层数据。</div>', unsafe_allow_html=True)
+    var dot = L.divIcon({{iconSize: [18, 18], className: '', html:
+      '<div style="width:16px;height:16px;border-radius:50%;background:#c0392b;border:3px solid #fff;' +
+      'box-shadow:0 0 0 2px rgba(192,57,43,.45);"></div>'}});
+    var marker = null, circle = null, first = true;
+
+    map.on('locationfound', function (e) {{
+      if (!marker) {{
+        circle = L.circle(e.latlng, {{radius: e.accuracy || 60, color: '#c0392b', weight: 1,
+                                      fillColor: '#c0392b', fillOpacity: 0.12}}).addTo(map);
+        marker = L.marker(e.latlng, {{icon: dot, zIndexOffset: 1200}}).addTo(map)
+                  .bindTooltip('我的位置', {{permanent: false}});
+      }} else {{
+        marker.setLatLng(e.latlng);
+        circle.setLatLng(e.latlng).setRadius(e.accuracy || 60);
+      }}
+      if (first) {{ map.setView(e.latlng, Math.max(map.getZoom(), 16)); first = false; }}
+    }});
+    map.on('locationerror', function (e) {{
+      var t = document.getElementById('locmsg');
+      if (t) {{ t.style.display = 'block';
+               t.innerText = '定位失败：' + (e.message || '未知原因') + '。请允许定位权限，或用 https 打开。'; }}
+    }});
+
+    var ctl = L.control({{position: 'topleft'}});
+    ctl.onAdd = function () {{
+      var d = L.DomUtil.create('div', '');
+      d.innerHTML = '<button id="locbtn" style="background:#fff;border:2px solid rgba(0,0,0,.15);' +
+        'border-radius:4px;padding:7px 9px;cursor:pointer;font:13px Microsoft YaHei;' +
+        'box-shadow:0 1px 4px rgba(0,0,0,.2);">📍 我的位置</button>';
+      L.DomEvent.disableClickPropagation(d);
+      return d;
+    }};
+    ctl.addTo(map);
+    document.getElementById('locbtn').onclick = function () {{
+      map.locate({{enableHighAccuracy: true, timeout: 20000, watch: true, setView: true}});
+    }};
+
+    var msg = L.DomUtil.create('div', '', map.getContainer());
+    msg.id = 'locmsg';
+    msg.style.cssText = 'display:none;position:absolute;left:50%;top:10px;transform:translateX(-50%);' +
+      'z-index:9999;background:#fff3f0;border:1px solid #f0b8ad;color:#a33a26;padding:6px 10px;' +
+      'border-radius:4px;font:12px Microsoft YaHei;max-width:90%;';
+  }}, 200);
+}})();
+</script>"""))
+
+components.html(m._repr_html_(), height=560, scrolling=False)
+
+# ================= 6. 搜索选中的设施卡片（在 iframe 外，导航链接一定能点）=================
+if q.strip():
+    hit = shown[shown["名称"].astype(str).str.contains(q.strip(), na=False)].head(20)
+    if hit.empty:
+        st.markdown('<div class="hint">没有匹配的设施，换个关键词试试。</div>', unsafe_allow_html=True)
     else:
-        all_times = sorted({t for _, ts, _ in rows for t in ts})
-        head = "".join(f"<th>{t} 分钟</th>" for t in all_times)
+        labels = [f"{r['名称']}（{r['主题']}·{r['细分']}）" for _, r in hit.iterrows()]
+        pick = st.selectbox("选择设施", labels, label_visibility="collapsed")
+        row = hit.iloc[labels.index(pick)]
+        lon, lat = float(row["经度"]), float(row["纬度"])
+        extra = ""
+        for c in EXTRA_COLS:
+            v = row.get(c)
+            if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() in ("", "nan"):
+                continue
+            txt = "<br>".join(t.strip() for t in str(v).split("|") if t.strip())
+            extra += (f'<div style="margin-top:6px;padding:6px 9px;background:#f6f8fa;'
+                      f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
+                      f'<div style="font-size:10.5px;color:#8a95a1;">{c}</div>'
+                      f'<div style="font-size:12.5px;color:#33404d;line-height:1.6;">{txt}</div></div>')
+        st.markdown(f"""
+        <div class="card">
+          <div class="t">{row['名称']}</div>
+          <div class="r">
+            <b>类别</b>{row['主题']} / {row['细分']}<br>
+            <b>位置</b>{row['所在楼宇/区域'] if pd.notna(row['所在楼宇/区域']) else '—'}<br>
+            <b>地址</b>{row['地址'] if pd.notna(row['地址']) else '未提供'}
+          </div>
+          {extra}
+          <a class="navbtn" href="{nav_url(lon, lat, row['名称'])}" target="_blank" rel="noopener">
+            在高德地图中导航到这里</a>
+          <div class="hint" style="margin-top:6px;">手机上点开会唤起高德 App；
+            若只打开了网页版，页面里会有"打开高德地图"按钮。</div>
+        </div>""", unsafe_allow_html=True)
+else:
+    st.markdown('<div class="hint">提示：点地图上的点位看详情；想直接导航，在上方搜索框输入名称后选中即可。'
+                '</div>', unsafe_allow_html=True)
+
+# ================= 7. 统计表 =================
+with st.expander("各出行方式可达设施数量统计", expanded=False):
+    pts = tuple((float(x), float(y)) for x, y in zip(shown["经度"], shown["纬度"]))
+    rows = reach_table(pts, str(len(shown)) + theme_pick)
+    if rows:
+        all_t = sorted({t for _, ts, _ in rows for t in ts})
+        head = "".join(f"<th>{t} 分钟</th>" for t in all_t)
         body = ""
         for label, times, cells in rows:
-            m_ = dict(zip(times, cells))
-            tds = "".join(f'<td class="num">{m_.get(t, "—")}</td>' for t in all_times)
-            body += f"<tr><td>{label}</td>{tds}</tr>"
-            st.markdown(f'<table class="clean"><tr><th>出行方式</th>{head}</tr>{body}</table>',
-                        unsafe_allow_html=True)
-            st.markdown('<div class="hint">统计口径：设施点位落在对应出行方式、对应时间档的可达圈内'
-                        '（步行/骑行/驾车为 5/10/15 分钟，公交为 30/45/60 分钟）。</div>',
-                        unsafe_allow_html=True)
+            mm = dict(zip(times, cells))
+            body += (f"<tr><td>{label}</td>" +
+                     "".join(f'<td class="num">{mm.get(t, "—")}</td>' for t in all_t) + "</tr>")
+        st.markdown(f'<table class="clean"><tr><th>出行方式</th>{head}</tr>{body}</table>',
+                    unsafe_allow_html=True)
+        st.markdown('<div class="hint">统计口径：设施点位落在对应方式、对应时间档的可达圈内。</div>',
+                    unsafe_allow_html=True)
