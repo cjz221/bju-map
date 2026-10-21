@@ -387,6 +387,40 @@ window.POI = __POIJSON__;
 window.POI_COLOR = {"宜居": "#2f7d5d", "宜业": "#2f5f9e", "宜乐": "#b96a1b"};
 window.POI_GLYPH = {"宜居": "居", "宜业": "业", "宜乐": "乐"};
 
+// ===== WGS-84 → GCJ-02 纠偏 =====
+// 浏览器定位返回 WGS-84，高德底图是 GCJ-02（火星坐标），
+// 北京大兴一带两者差 500 米以上，不纠偏蓝点会明显偏西南。
+function _outOfChina(lng, lat) {
+  return (lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271);
+}
+function _tLat(x, y) {
+  var r = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  r += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  r += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+  r += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+  return r;
+}
+function _tLng(x, y) {
+  var r = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  r += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  r += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+  r += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  return r;
+}
+function wgs84ToGcj02(lng, lat) {
+  if (_outOfChina(lng, lat)) { return [lng, lat]; }
+  var dLat = _tLat(lng - 105.0, lat - 35.0);
+  var dLng = _tLng(lng - 105.0, lat - 35.0);
+  var radLat = lat / 180.0 * Math.PI;
+  var magic = Math.sin(radLat);
+  magic = 1 - 0.00669342162296594323 * magic * magic;
+  var sq = Math.sqrt(magic);
+  dLat = (dLat * 180.0) /
+         ((6378245.0 * (1 - 0.00669342162296594323)) / (magic * sq) * Math.PI);
+  dLng = (dLng * 180.0) / (6378245.0 / sq * Math.cos(radLat) * Math.PI);
+  return [lng + dLng, lat + dLat];
+}
+
 // 由数据批量生成点位（比 folium.Marker 省 90% 体积）
 (function () {
   var tries = 0;
@@ -474,18 +508,21 @@ window.jumpAmap = function (el) {
     var marker = null, circle = null, first = true;
 
     map.on('locationfound', function (e) {
+      // 关键：把 WGS-84 转成 GCJ-02 再画，否则和高德底图差 500 米
+      var g = wgs84ToGcj02(e.latlng.lng, e.latlng.lat);
+      var ll = L.latLng(g[1], g[0]);
       if (!marker) {
-        circle = L.circle(e.latlng, {radius: e.accuracy || 60, color: '#1a73e8', weight: 1,
-                                     fillColor: '#1a73e8', fillOpacity: 0.12}).addTo(map);
-        marker = L.marker(e.latlng, {icon: dot, zIndexOffset: 1200}).addTo(map)
-                  .bindTooltip('我的位置', {permanent: false});
+        circle = L.circle(ll, {radius: e.accuracy || 60, color: '#1a73e8', weight: 1,
+                               fillColor: '#1a73e8', fillOpacity: 0.12}).addTo(map);
+        marker = L.marker(ll, {icon: dot, zIndexOffset: 1200}).addTo(map)
+                  .bindTooltip('我的位置（精度 ±' + Math.round(e.accuracy || 0) + ' 米）');
       } else {
-        marker.setLatLng(e.latlng);
-        circle.setLatLng(e.latlng).setRadius(e.accuracy || 60);
+        marker.setLatLng(ll);
+        circle.setLatLng(ll).setRadius(e.accuracy || 60);
       }
       var m1 = document.getElementById('locmsg');
       if (m1) { m1.style.display = 'none'; }
-      if (first) { map.setView(e.latlng, Math.max(map.getZoom(), 16)); first = false; }
+      if (first) { map.setView(ll, Math.max(map.getZoom(), 16)); first = false; }
     });
     map.on('locationerror', function (e) {
       var m2 = document.getElementById('locmsg');
