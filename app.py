@@ -116,11 +116,14 @@ STD_COLS = {"id", "名称", "一级分类", "所在楼宇/区域", "经度", "�
 
 
 def nav_url(lon, lat, name):
+    """高德 URI：显式带 mode=car&policy=1，落地直接是路线页"""
     return (f"https://uri.amap.com/navigation?to={lon:.6f},{lat:.6f},"
-            f"{urllib.parse.quote(str(name))}&src={AMAP_SRC}&coordinate=gaode&callnative=1")
+            f"{urllib.parse.quote(str(name))}&mode=car&policy=1&src={AMAP_SRC}"
+            f"&coordinate=gaode&callnative=1")
 
 
 def nav_button(lon, lat, name):
+    """地图外（Streamlit 主文档）用的链接，直接可点"""
     return (f'<a class="navbtn" href="{nav_url(lon, lat, name)}" target="_blank" '
             f'rel="noopener">导航到这里</a>')
 
@@ -305,46 +308,26 @@ for name, (lat, lon) in DORMS.items():
     folium.CircleMarker([lat, lon], radius=3.5, color='#1a1a1a', weight=1, fill=True,
                         fill_color='#e8b923', fill_opacity=1, tooltip=f"起点 · {name}").add_to(m)
 
+# ===== 点位数据：只打包必要字段，marker 由 JS 统一生成（体积是 folium.Marker 的 1/5）=====
+poi_rows = []
 for _, row in shown.iterrows():
     theme, sub = row["主题"], row["细分"]
-    name = row["名称"] if pd.notna(row["名称"]) else "未知设施"
-    lon, lat = float(row["经度"]), float(row["纬度"])
 
-    def val(col, default="—"):
-        return row[col] if col in row and pd.notna(row[col]) else default
+    def val(col, default=""):
+        v = row[col] if col in row else None
+        return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
 
-    lines = [f"{k}：{v}" for k, v in [("类别", f"{theme} / {sub}"),
-                                     ("位置", val("所在楼宇/区域", "未知")),
-                                     ("时间", val("开放时间")), ("电话", val("电话", "无")),
-                                     ("地址", val("地址", "未提供"))] if v not in ("—", "")]
-    extra = ""
+    ex = []
     for c in EXTRA_COLS:
-        v = row.get(c)
-        if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() in ("", "nan"):
-            continue
-        txt = "·".join(t.strip() for t in str(v).split("|") if t.strip())
-        extra += (f'<div style="margin-top:5px;padding:5px 7px;background:#f6f8fa;'
-                  f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
-                  f'<div style="font-size:10.5px;color:#8a95a1;">{c}</div>'
-                  f'<div style="font-size:12px;color:#33404d;line-height:1.55;">{txt}</div></div>')
-    note = val("备注", "")
-    popup = (f'<div style="width:210px;font-family:\'Microsoft YaHei\',sans-serif;">'
-             f'<div style="border-left:3px solid {THEME_COLOR.get(theme, "#5b6673")};padding-left:7px;'
-             f'font-size:13.5px;font-weight:600;color:#22303d;">{name}</div>'
-             f'<div style="font-size:11.5px;color:#4a5763;line-height:1.7;margin-top:6px;">'
-             + "<br>".join(lines) + f'</div>'
-             + (f'<div style="margin-top:5px;font-size:11.5px;color:#5b6673;">{note}</div>'
-                if note != "—" else "")
-             + extra
-             + f'<a href="{nav_url(lon, lat, name)}" '
-               f"onclick=\"return jumpAmap(this.href);\" "
-               f'style="display:block;text-align:center;margin-top:9px;padding:9px 0;'
-               f'border-radius:5px;background:#1d5f96;color:#fff;text-decoration:none;'
-               f'font-size:13.5px;font-weight:600;">导航到这里</a></div>')
-    folium.Marker([lat, lon], popup=folium.Popup(popup, max_width=250),
-                  tooltip=f"{name}（{theme}·{sub}）",
-                  icon=folium.Icon(color=THEME_FA_COLOR.get(theme, "gray"),
-                                   icon=SUB_ICON.get(sub, "map-marker"), prefix="fa")).add_to(m)
+        t = val(c)
+        if t:
+            ex.append([c, "·".join(s.strip() for s in t.split("|") if s.strip())])
+    poi_rows.append({
+        "n": val("名称") or "未知设施", "x": round(float(row["经度"]), 6),
+        "y": round(float(row["纬度"]), 6), "g": theme, "s": sub,
+        "a": val("所在楼宇/区域"), "b": val("开放时间"), "c": val("电话"),
+        "d": val("地址"), "e": val("备注"), "f": ex,
+    })
 
 # 小图例 + 我的位置（蓝点）样式
 legend = "".join(
@@ -358,6 +341,29 @@ m.get_root().html.add_child(folium.Element(f"""
        font:11px/1.55 'Microsoft YaHei',sans-serif;color:#33404d;}}
   @media (max-width:640px) {{ #lg {{font-size:10px;padding:5px 7px;bottom:7px;right:7px;}} }}
 
+  /* 弹窗统一样式（放这里，避免每个 marker 重复写内联样式） */
+  .pw {{width:200px;font-family:'Microsoft YaHei',sans-serif;}}
+  .pt {{border-left:3px solid #5b6673;padding-left:7px;font-size:13.5px;font-weight:600;color:#22303d;}}
+  .pr {{font-size:11.5px;color:#4a5763;line-height:1.7;margin-top:6px;}}
+  .pn {{font-size:11.5px;color:#5b6673;margin-top:5px;}}
+  .px {{margin-top:5px;padding:5px 7px;background:#f6f8fa;border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;}}
+  .pxk {{font-size:10.5px;color:#8a95a1;}}
+  .pxv {{font-size:12px;color:#33404d;line-height:1.55;}}
+  .pb {{display:block;text-align:center;margin-top:9px;padding:9px 0;border-radius:5px;
+       background:#1d5f96;color:#fff;text-decoration:none;font-size:13.5px;font-weight:600;}}
+
+  /* 微信内提示条 */
+  #wxbar {{display:none;position:fixed;left:0;right:0;top:0;z-index:99999;background:#fff7e6;
+          border-bottom:1px solid #f0d9a8;color:#8a5a00;padding:7px 10px;
+          font:12px/1.5 'Microsoft YaHei',sans-serif;text-align:center;}}
+
+  /* 地图点位图钉（比 folium 默认 marker 省 90% 体积） */
+  .pin {{width:22px;height:30px;position:relative;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));}}
+  .pin i {{position:absolute;left:0;top:0;width:22px;height:22px;background:var(--c);
+          border:2px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);
+          display:flex;align-items:center;justify-content:center;box-sizing:border-box;}}
+  .pin i b {{transform:rotate(45deg);color:#fff;font:600 10px/1 'Microsoft YaHei',sans-serif;}}
+
   /* 我的位置：高德风格的蓝点 + 呼吸光晕 */
   .medot {{ position:relative; width:16px; height:16px; border-radius:50%;
            background:#1a73e8; border:3px solid #fff;
@@ -369,81 +375,156 @@ m.get_root().html.add_child(folium.Element(f"""
                        70% {{transform:scale(1.5);opacity:0}}
                        100% {{transform:scale(1.5);opacity:0}} }}
 </style>
+<div id="wxbar">微信内无法直接唤起高德，请点右上角 ··· → 在浏览器中打开</div>
 <div id="lg">{legend}</div>"""))
 
 # ★ 自己实现定位（不依赖插件；按钮点击触发，兼容 iOS 的手势要求）
 # 注意：加进 get_root().script 的必须是「裸 JS」，不能再包 <script> 标签，
 # 否则会和 folium 自己的 <script> 嵌套，导致后面的 JS 被当成文字显示。
-map_name = m.get_name()
-m.get_root().script.add_child(folium.Element(f"""
-// 弹窗里的「导航到这里」：让最外层页面跳转，手机才能调起高德 App
-window.jumpAmap = function (u) {{
-  try {{ window.top.location.href = u; }}
-  catch (e) {{ try {{ window.open(u, '_blank'); }} catch (e2) {{ location.href = u; }} }}
-  return false;
-}};
+_POI_JSON = json.dumps(poi_rows, ensure_ascii=False, separators=(",", ":"))
+_JS = r"""
+window.POI = __POIJSON__;
+window.POI_COLOR = {"宜居": "#2f7d5d", "宜业": "#2f5f9e", "宜乐": "#b96a1b"};
+window.POI_GLYPH = {"宜居": "居", "宜业": "业", "宜乐": "乐"};
 
-(function () {{
+// 由数据批量生成点位（比 folium.Marker 省 90% 体积）
+(function () {
   var tries = 0;
-  var timer = setInterval(function () {{
-    var map = window["{map_name}"];
-    if (!map || !map.locate) {{ if (++tries > 60) clearInterval(timer); return; }}
+  var t = setInterval(function () {
+    var map = window["__MAPNAME__"];
+    if (!map || !window.L) { if (++tries > 80) { clearInterval(t); } return; }
+    clearInterval(t);
+    window.POI.forEach(function (p) {
+      var c = window.POI_COLOR[p.g] || "#5b6673";
+      var ico = L.divIcon({
+        className: "", iconSize: [22, 30], iconAnchor: [11, 30], popupAnchor: [0, -28],
+        html: '<div class="pin" style="--c:' + c + '"><i><b>' +
+              (window.POI_GLYPH[p.g] || "点") + '</b></i></div>'
+      });
+      var body = "类别：" + p.g + " / " + p.s;
+      if (p.a) { body += "<br>位置：" + p.a; }
+      if (p.b) { body += "<br>时间：" + p.b; }
+      if (p.c) { body += "<br>电话：" + p.c; }
+      if (p.d) { body += "<br>地址：" + p.d; }
+      var h = '<div class="pw"><div class="pt" style="border-color:' + c + '">' + p.n +
+              '</div><div class="pr">' + body + '</div>';
+      if (p.e) { h += '<div class="pn">' + p.e + '</div>'; }
+      (p.f || []).forEach(function (kv) {
+        h += '<div class="px"><div class="pxk">' + kv[0] + '</div><div class="pxv">' +
+             kv[1] + '</div></div>';
+      });
+      var u = 'https://uri.amap.com/navigation?to=' + p.x.toFixed(6) + ',' + p.y.toFixed(6) + ',' +
+              encodeURIComponent(p.n) + '&mode=car&policy=1&src=BUCEA&coordinate=gaode&callnative=1';
+      h += '<a class="pb" href="' + u + '" data-lon="' + p.x + '" data-lat="' + p.y +
+           '" data-nm="' + p.n.replace(/"/g, '&quot;') +
+           '" onclick="return jumpAmap(this);">导航到这里</a></div>';
+      L.marker([p.y, p.x], {icon: ico}).addTo(map)
+        .bindPopup(h, {maxWidth: 250}).bindTooltip(p.n);
+    });
+  }, 120);
+})();
+
+// 弹窗里的「导航到这里」：优先用高德 App 原生 scheme（在点击手势里触发，手机才认），
+// 没装 App 或系统拦了，再回落到高德网页版路线页。
+window.jumpAmap = function (el) {
+  var lon = el.dataset.lon || '', lat = el.dataset.lat || '';
+  var nm = encodeURIComponent(el.dataset.nm || '目的地');
+  var web = el.href;
+  var ua = navigator.userAgent || '';
+  var scheme = null;
+  if (/android/i.test(ua)) {
+    scheme = 'androidamap://navi?sourceApplication=BUCEA&poiname=' + nm +
+             '&lat=' + lat + '&lon=' + lon + '&dev=0&style=2';
+  } else if (/iphone|ipad|ipod/i.test(ua)) {
+    scheme = 'iosamap://navi?sourceApplication=BUCEA&poiname=' + nm +
+             '&lat=' + lat + '&lon=' + lon + '&dev=0&style=2';
+  }
+  if (/MicroMessenger/i.test(ua)) {
+    var b = document.getElementById('wxbar');
+    if (b) { b.style.display = 'block'; }
+    return false;
+  }
+  if (scheme) {
+    setTimeout(function () {
+      if (!document.hidden) {
+        try { window.top.location.href = web; } catch (e) { location.href = web; }
+      }
+    }, 1600);
+    try { window.top.location.href = scheme; } catch (e) { location.href = scheme; }
+    return false;
+  }
+  try { window.top.location.href = web; } catch (e) { window.open(web, '_blank'); }
+  return false;
+};
+
+// 定位：打开就自动请求一次，加载蓝点 + 精度圈；失败给出原因提示
+(function () {
+  if (/MicroMessenger/i.test(navigator.userAgent)) {
+    var b = document.getElementById('wxbar');
+    if (b) { b.style.display = 'block'; }
+  }
+  var tries = 0;
+  var timer = setInterval(function () {
+    var map = window["__MAPNAME__"];
+    if (!map || !map.locate) { if (++tries > 60) { clearInterval(timer); } return; }
     clearInterval(timer);
 
-    var dot = L.divIcon({{iconSize: [16, 16], className: '',
-                          html: '<div class="medot"></div>'}});
+    var dot = L.divIcon({iconSize: [16, 16], className: '',
+                         html: '<div class="medot"></div>'});
     var marker = null, circle = null, first = true;
 
-    map.on('locationfound', function (e) {{
-      if (!marker) {{
-        circle = L.circle(e.latlng, {{radius: e.accuracy || 60, color: '#1a73e8', weight: 1,
-                                      fillColor: '#1a73e8', fillOpacity: 0.12}}).addTo(map);
-        marker = L.marker(e.latlng, {{icon: dot, zIndexOffset: 1200}}).addTo(map)
-                  .bindTooltip('我的位置', {{permanent: false}});
-      }} else {{
+    map.on('locationfound', function (e) {
+      if (!marker) {
+        circle = L.circle(e.latlng, {radius: e.accuracy || 60, color: '#1a73e8', weight: 1,
+                                     fillColor: '#1a73e8', fillOpacity: 0.12}).addTo(map);
+        marker = L.marker(e.latlng, {icon: dot, zIndexOffset: 1200}).addTo(map)
+                  .bindTooltip('我的位置', {permanent: false});
+      } else {
         marker.setLatLng(e.latlng);
         circle.setLatLng(e.latlng).setRadius(e.accuracy || 60);
-      }}
-      var t = document.getElementById('locmsg');
-      if (t) {{ t.style.display = 'none'; }}
-      if (first) {{ map.setView(e.latlng, Math.max(map.getZoom(), 16)); first = false; }}
-    }});
-    map.on('locationerror', function (e) {{
-      var t = document.getElementById('locmsg');
-      if (t) {{
-        t.style.display = 'block';
-        t.innerText = '定位失败：' + (e.message || '未知原因') +
-                      '　请允许浏览器定位权限，并用 https 打开本页。';
-      }}
-    }});
+      }
+      var m1 = document.getElementById('locmsg');
+      if (m1) { m1.style.display = 'none'; }
+      if (first) { map.setView(e.latlng, Math.max(map.getZoom(), 16)); first = false; }
+    });
+    map.on('locationerror', function (e) {
+      var m2 = document.getElementById('locmsg');
+      if (m2) {
+        m2.style.display = 'block';
+        m2.innerText = '定位失败：' + (e.message || '未知原因') +
+                       '　请允许浏览器定位权限，并用 https 打开本页。';
+      }
+    });
 
-    var ctl = L.control({{position: 'topleft'}});
-    ctl.onAdd = function () {{
+    var ctl = L.control({position: 'topleft'});
+    ctl.onAdd = function () {
       var d = L.DomUtil.create('div', '');
       d.innerHTML = '<button id="locbtn" style="background:#fff;border:2px solid rgba(0,0,0,.15);' +
         'border-radius:4px;padding:7px 9px;cursor:pointer;font:13px Microsoft YaHei;' +
-        'box-shadow:0 1px 4px rgba(0,0,0,.2);">📍 我的位置</button>';
+        'box-shadow:0 1px 4px rgba(0,0,0,.2);">我的位置</button>';
       L.DomEvent.disableClickPropagation(d);
       return d;
-    }};
+    };
     ctl.addTo(map);
-    document.getElementById('locbtn').onclick = function () {{
-      map.locate({{enableHighAccuracy: true, timeout: 20000, watch: true, setView: true}});
-    }};
+    document.getElementById('locbtn').onclick = function () {
+      map.locate({enableHighAccuracy: true, timeout: 20000, watch: true, setView: true});
+    };
 
     var msg = L.DomUtil.create('div', '', map.getContainer());
     msg.id = 'locmsg';
-    msg.style.cssText = 'display:none;position:absolute;left:50%;top:10px;transform:translateX(-50%);' +
-      'z-index:9999;background:#fff3f0;border:1px solid #f0b8ad;color:#a33a26;padding:6px 10px;' +
-      'border-radius:4px;font:12px Microsoft YaHei;max-width:90%;';
+    msg.style.cssText = 'display:none;position:absolute;left:50%;top:10px;' +
+      'transform:translateX(-50%);z-index:9999;background:#fff3f0;border:1px solid #f0b8ad;' +
+      'color:#a33a26;padding:6px 10px;border-radius:4px;font:12px Microsoft YaHei;max-width:90%;';
 
-    // ★ 打开页面就自动定位一次（不需要点任何按钮）
-    setTimeout(function () {{
-      map.locate({{enableHighAccuracy: true, timeout: 20000, watch: true, setView: true}});
-    }}, 600);
-  }}, 200);
-}})();
-"""))
+    setTimeout(function () {
+      map.locate({enableHighAccuracy: true, timeout: 20000, watch: true, setView: true});
+    }, 600);
+  }, 200);
+})();
+"""
+
+m.get_root().script.add_child(
+    folium.Element(_JS.replace("__POIJSON__", _POI_JSON).replace("__MAPNAME__", m.get_name())))
 
 # ★ 注意：必须用 get_root().render()，_repr_html_() 返回的是转义后的 HTML（会显示成文字）
 components.html(m.get_root().render(), height=560, scrolling=False)
@@ -458,12 +539,19 @@ if q.strip():
         pick = st.selectbox("选择设施", labels, label_visibility="collapsed")
         row = hit.iloc[labels.index(pick)]
         lon, lat = float(row["经度"]), float(row["纬度"])
-        extra = ""
+        extra, links = "", ""
         for c in EXTRA_COLS:
             v = row.get(c)
             if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() in ("", "nan"):
                 continue
-            txt = "<br>".join(t.strip() for t in str(v).split("|") if t.strip())
+            txt = str(v).strip()
+            # 列名里带「链接 / 小程序 / 网址」的，直接渲染成按钮（瑞幸点餐、电影票等）
+            if any(k in c for k in ("链接", "小程序", "网址", "预订", "点餐", "购票")) \
+                    and txt.startswith(("http", "weixin://", "alipays://")):
+                links += (f'<a class="navbtn" style="background:#b96a1b;margin-top:8px;" '
+                          f'href="{txt}" target="_blank" rel="noopener">{c}</a>')
+                continue
+            txt = "<br>".join(t.strip() for t in txt.split("|") if t.strip())
             extra += (f'<div style="margin-top:6px;padding:6px 9px;background:#f6f8fa;'
                       f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
                       f'<div style="font-size:10.5px;color:#8a95a1;">{c}</div>'
@@ -479,6 +567,7 @@ if q.strip():
           {extra}
           <a class="navbtn" href="{nav_url(lon, lat, row['名称'])}" target="_blank" rel="noopener">
             在高德地图中导航到这里</a>
+          {links}
           <div class="hint" style="margin-top:6px;">手机上点开会唤起高德 App；
             若只打开了网页版，页面里会有"打开高德地图"按钮。</div>
         </div>""", unsafe_allow_html=True)
