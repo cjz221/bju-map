@@ -45,6 +45,8 @@ st.markdown("""
   .navbtn {display:block; text-align:center; padding:10px 0; margin-top:10px; border-radius:6px;
            background:#1d5f96; color:#fff !important; text-decoration:none; font-size:14px;
            font-weight:600; letter-spacing:.5px;}
+  .navbtn2 {background:#fff; color:#1d5f96 !important; border:1px solid #b9cede;
+            font-weight:500; margin-top:8px; font-size:13px;}
   .hint {font-size:11px; color:#93a0ac; line-height:1.6;}
   table.clean {border-collapse:collapse; width:100%; font-size:12.5px;}
   table.clean th {background:#f1f4f7; color:#41505f; text-align:left; padding:6px 9px;
@@ -120,6 +122,30 @@ def nav_url(lon, lat, name):
     return (f"https://uri.amap.com/navigation?to={lon:.6f},{lat:.6f},"
             f"{urllib.parse.quote(str(name))}&mode=car&policy=1&src={AMAP_SRC}"
             f"&coordinate=gaode&callnative=1")
+
+
+def _user_agent():
+    try:
+        return st.context.headers.get("User-Agent", "") or ""
+    except Exception:
+        return ""
+
+
+UA = _user_agent()
+IS_IOS = bool(re.search(r"iPhone|iPad|iPod", UA))
+IS_ANDROID = "Android" in UA
+IS_WECHAT = "MicroMessenger" in UA
+
+
+def app_nav_url(lon, lat, name):
+    """高德 App 的原生 scheme（坐标是 GCJ-02，所以 dev=0 不再转换）"""
+    nm = urllib.parse.quote(str(name))
+    q = f"sourceApplication=BUCEA&poiname={nm}&lat={lat:.6f}&lon={lon:.6f}&dev=0&style=2"
+    if IS_IOS:
+        return f"iosamap://navi?{q}"
+    if IS_ANDROID:
+        return f"androidamap://navi?{q}"
+    return nav_url(lon, lat, name)
 
 
 def nav_button(lon, lat, name):
@@ -250,9 +276,14 @@ theme_pick = st.radio("设施类别", ["全部"] + THEME_ORDER, index=0, horizon
 shown = df if theme_pick == "全部" else df[df["主题"] == theme_pick]
 shown = shown.copy()
 
-st.markdown('<div class="lbl">搜索</div>', unsafe_allow_html=True)
+st.markdown('''<div class="lbl">搜索</div>''', unsafe_allow_html=True)
 q = st.text_input("搜索", placeholder="输入设施名称，例如 图书馆 / 荟聚 / 游泳馆",
                   label_visibility="collapsed")
+if IS_WECHAT:
+    st.markdown('<div class="hint" style="color:#a33a26;background:#fff3f0;'
+                'border:1px solid #f0b8ad;border-radius:5px;padding:7px 10px;margin-top:6px;">'
+                '微信内无法直接唤起高德 App：请点右上角 ··· → 在浏览器中打开本页，'
+                '跳转就能直达高德。</div>', unsafe_allow_html=True)
 
 # ================= 5. 地图 =================
 m = folium.Map(location=[39.748, 116.286], zoom_start=13 if sel_mode == "bus" else 14,
@@ -479,12 +510,22 @@ window.jumpAmap = function (el) {
     return false;
   }
   if (scheme) {
+    // 唤起成功时页面会失焦/隐藏；只有「还停在本页」才回落到网页版，
+    // 否则 iOS 的确认框还没点就又被网页覆盖了。
+    var left = false;
+    window.addEventListener('blur', function () { left = true; });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) { left = true; }
+    });
     setTimeout(function () {
-      if (!document.hidden) {
+      if (!left && !document.hidden) {
         try { window.top.location.href = web; } catch (e) { location.href = web; }
       }
-    }, 1600);
-    try { window.top.location.href = scheme; } catch (e) { location.href = scheme; }
+    }, 2800);
+    try {
+      if (window.top && window.top.location) { window.top.location.href = scheme; }
+      else { location.href = scheme; }
+    } catch (e) { location.href = scheme; }
     return false;
   }
   try { window.top.location.href = web; } catch (e) { window.open(web, '_blank'); }
@@ -593,6 +634,10 @@ if q.strip():
                       f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
                       f'<div style="font-size:10.5px;color:#8a95a1;">{c}</div>'
                       f'<div style="font-size:12.5px;color:#33404d;line-height:1.6;">{txt}</div></div>')
+        is_phone = IS_IOS or IS_ANDROID
+        primary_href = app_nav_url(lon, lat, row['名称']) if is_phone \
+            else nav_url(lon, lat, row['名称'])
+        primary_label = "直接打开高德地图 App 导航" if is_phone else "打开高德地图导航"
         st.markdown(f"""
         <div class="card">
           <div class="t">{row['名称']}</div>
@@ -602,11 +647,13 @@ if q.strip():
             <b>地址</b>{row['地址'] if pd.notna(row['地址']) else '未提供'}
           </div>
           {extra}
-          <a class="navbtn" href="{nav_url(lon, lat, row['名称'])}" target="_blank" rel="noopener">
-            在高德地图中导航到这里</a>
+          <a class="navbtn" href="{primary_href}" rel="noopener">{primary_label}</a>
+          <a class="navbtn navbtn2" href="{nav_url(lon, lat, row['名称'])}" target="_blank"
+             rel="noopener">网页版高德（没装 App 时用）</a>
           {links}
-          <div class="hint" style="margin-top:6px;">手机上点开会唤起高德 App；
-            若只打开了网页版，页面里会有"打开高德地图"按钮。</div>
+          <div class="hint" style="margin-top:6px;">
+            第一个按钮直接唤起高德 App；没装或系统拦截时，用第二个。
+          </div>
         </div>""", unsafe_allow_html=True)
 else:
     st.markdown('<div class="hint">提示：点地图上的点位看详情；想直接导航，在上方搜索框输入名称后选中即可。'
