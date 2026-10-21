@@ -286,9 +286,11 @@ if IS_WECHAT:
                 '跳转就能直达高德。</div>', unsafe_allow_html=True)
 
 # ================= 5. 地图 =================
+# scrollWheelZoom=False：页面里滚动时不抢滚轮，避免地图被"以鼠标位置为中心"莫名放大
 m = folium.Map(location=[39.748, 116.286], zoom_start=13 if sel_mode == "bus" else 14,
                tiles='https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8'
-                     '&x={x}&y={y}&z={z}', attr='高德地图')
+                     '&x={x}&y={y}&z={z}', attr='高德地图',
+               scrollWheelZoom=False)
 
 scape_time = None
 if iso is not None:
@@ -459,6 +461,8 @@ function wgs84ToGcj02(lng, lat) {
     var map = window["__MAPNAME__"];
     if (!map || !window.L) { if (++tries > 80) { clearInterval(t); } return; }
     clearInterval(t);
+    // 再保险一次：滚动页面时不要被地图抢走滚轮
+    if (map.scrollWheelZoom) { map.scrollWheelZoom.disable(); }
     window.POI.forEach(function (p) {
       var c = window.POI_COLOR[p.g] || "#5b6673";
       var ico = L.divIcon({
@@ -563,7 +567,17 @@ window.jumpAmap = function (el) {
       }
       var m1 = document.getElementById('locmsg');
       if (m1) { m1.style.display = 'none'; }
-      if (first) { map.setView(ll, Math.max(map.getZoom(), 16)); first = false; }
+      // 注意：这里绝对不要 map.setView()——否则 GPS 迟到时地图会自己飞走。
+      // 只有用户点「我的位置」按钮时才跳（那个用 setView: true）。
+      var km = map.distance(ll, L.latLng(39.748, 116.286)) / 1000;
+      if (km > 2 && m1) {
+        m1.style.background = '#eef6ff';
+        m1.style.borderColor = '#b9d4ee';
+        m1.style.color = '#1d5f96';
+        m1.style.display = 'block';
+        m1.innerText = '已定位到你（距校区约 ' + km.toFixed(1) +
+                       ' 公里）。点左上角「我的位置」可跳转过去。';
+      }
     });
     map.on('locationerror', function (e) {
       var m2 = document.getElementById('locmsg');
@@ -579,13 +593,19 @@ window.jumpAmap = function (el) {
       var d = L.DomUtil.create('div', '');
       d.innerHTML = '<button id="locbtn" style="background:#fff;border:2px solid rgba(0,0,0,.15);' +
         'border-radius:4px;padding:7px 9px;cursor:pointer;font:13px Microsoft YaHei;' +
-        'box-shadow:0 1px 4px rgba(0,0,0,.2);">我的位置</button>';
+        'box-shadow:0 1px 4px rgba(0,0,0,.2);">我的位置</button>' +
+        '<button id="homebtn" style="display:block;margin-top:6px;background:#fff;' +
+        'border:2px solid rgba(0,0,0,.15);border-radius:4px;padding:6px 9px;cursor:pointer;' +
+        'font:12px Microsoft YaHei;box-shadow:0 1px 4px rgba(0,0,0,.2);">回到校区</button>';
       L.DomEvent.disableClickPropagation(d);
       return d;
     };
     ctl.addTo(map);
     document.getElementById('locbtn').onclick = function () {
       map.locate({enableHighAccuracy: true, timeout: 20000, watch: true, setView: true});
+    };
+    document.getElementById('homebtn').onclick = function () {
+      map.setView([39.748, 116.286], 14);
     };
 
     var msg = L.DomUtil.create('div', '', map.getContainer());
@@ -595,7 +615,8 @@ window.jumpAmap = function (el) {
       'color:#a33a26;padding:6px 10px;border-radius:4px;font:12px Microsoft YaHei;max-width:90%;';
 
     setTimeout(function () {
-      map.locate({enableHighAccuracy: true, timeout: 20000, watch: true, setView: true});
+      // 只定位、不移动地图（setView:false），避免 GPS 迟到时地图自己跳走
+      map.locate({enableHighAccuracy: true, timeout: 20000, watch: true, setView: false});
     }, 600);
   }, 200);
 })();
