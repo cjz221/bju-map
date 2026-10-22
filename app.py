@@ -354,7 +354,8 @@ for _, row in shown.iterrows():
     for c in EXTRA_COLS:
         t = val(c)
         if t:
-            ex.append([c, "·".join(s.strip() for s in t.split("|") if s.strip())])
+            # 支持 | 或单元格内换行（Excel 里 Alt+Enter）做多行
+            ex.append([c, "·".join(s.strip() for s in re.split(r"[|\n]+", t) if s.strip())])
     poi_rows.append({
         "n": val("名称") or "未知设施", "x": round(float(row["经度"]), 6),
         "y": round(float(row["纬度"]), 6), "g": theme, "s": sub,
@@ -385,11 +386,6 @@ m.get_root().html.add_child(folium.Element(f"""
   .pb {{display:block;text-align:center;margin-top:9px;padding:9px 0;border-radius:5px;
        background:#1d5f96;color:#fff;text-decoration:none;font-size:13.5px;font-weight:600;}}
 
-  /* 微信内提示条 */
-  #wxbar {{display:none;position:fixed;left:0;right:0;top:0;z-index:99999;background:#fff7e6;
-          border-bottom:1px solid #f0d9a8;color:#8a5a00;padding:7px 10px;
-          font:12px/1.5 'Microsoft YaHei',sans-serif;text-align:center;}}
-
   /* 地图点位图钉（比 folium 默认 marker 省 90% 体积） */
   .pin {{width:22px;height:30px;position:relative;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35));}}
   .pin i {{position:absolute;left:0;top:0;width:22px;height:22px;background:var(--c);
@@ -408,7 +404,6 @@ m.get_root().html.add_child(folium.Element(f"""
                        70% {{transform:scale(1.5);opacity:0}}
                        100% {{transform:scale(1.5);opacity:0}} }}
 </style>
-<div id="wxbar">微信内无法直接唤起高德，请点右上角 ··· → 在浏览器中打开</div>
 <div id="lg">{legend}</div>"""))
 
 # ★ 自己实现定位（不依赖插件；按钮点击触发，兼容 iOS 的手势要求）
@@ -509,8 +504,7 @@ window.jumpAmap = function (el) {
              '&lat=' + lat + '&lon=' + lon + '&dev=0&style=2';
   }
   if (/MicroMessenger/i.test(ua)) {
-    var b = document.getElementById('wxbar');
-    if (b) { b.style.display = 'block'; }
+    alert('微信内无法直接唤起高德：请点右上角 ··· → 在浏览器中打开本页');
     return false;
   }
   if (scheme) {
@@ -538,10 +532,6 @@ window.jumpAmap = function (el) {
 
 // 定位：打开就自动请求一次，加载蓝点 + 精度圈；失败给出原因提示
 (function () {
-  if (/MicroMessenger/i.test(navigator.userAgent)) {
-    var b = document.getElementById('wxbar');
-    if (b) { b.style.display = 'block'; }
-  }
   var tries = 0;
   var timer = setInterval(function () {
     var map = window["__MAPNAME__"];
@@ -650,7 +640,7 @@ if q.strip():
                 links += (f'<a class="navbtn" style="background:#b96a1b;margin-top:8px;" '
                           f'href="{txt}" target="_blank" rel="noopener">{c}</a>')
                 continue
-            txt = "<br>".join(t.strip() for t in txt.split("|") if t.strip())
+            txt = "<br>".join(t.strip() for t in re.split(r"[|\n]+", txt) if t.strip())
             extra += (f'<div style="margin-top:6px;padding:6px 9px;background:#f6f8fa;'
                       f'border-left:2px solid #cfd8e3;border-radius:0 3px 3px 0;">'
                       f'<div style="font-size:10.5px;color:#8a95a1;">{c}</div>'
