@@ -285,6 +285,25 @@ if IS_WECHAT:
                 '微信内无法直接唤起高德 App：请点右上角 ··· → 在浏览器中打开本页，'
                 '跳转就能直达高德。</div>', unsafe_allow_html=True)
 
+# 搜索匹配 → 选中（必须在建地图之前算出来，地图才能直接定位过去）
+sel_row = None
+if q.strip():
+    kw = q.strip()
+    hit = shown[shown["名称"].astype(str).str.contains(kw, na=False)].copy()
+    # 完全同名的排最前（搜"图书馆"就先命中"图书馆"本身）
+    hit["_exact"] = (hit["名称"].astype(str).str.strip() == kw).astype(int)
+    hit = hit.sort_values("_exact", ascending=False).head(20)
+    if hit.empty:
+        st.markdown('<div class="hint">没有匹配的设施，换个关键词试试。</div>', unsafe_allow_html=True)
+    elif len(hit) == 1:
+        # 只有一个结果：不用再点，直接定位
+        sel_row = hit.iloc[0]
+        st.markdown(f'<div class="hint">已定位到：{sel_row["名称"]}</div>', unsafe_allow_html=True)
+    else:
+        labels = [f"{r['名称']}（{r['主题']}·{r['细分']}）" for _, r in hit.iterrows()]
+        pick = st.selectbox("选择要定位的设施", labels, label_visibility="collapsed")
+        sel_row = hit.iloc[labels.index(pick)]
+
 # ================= 5. 地图 =================
 # scrollWheelZoom=False：页面里滚动时不抢滚轮，避免地图被"以鼠标位置为中心"莫名放大
 m = folium.Map(location=[39.748, 116.286], zoom_start=13 if sel_mode == "bus" else 14,
@@ -410,8 +429,12 @@ m.get_root().html.add_child(folium.Element(f"""
 # 注意：加进 get_root().script 的必须是「裸 JS」，不能再包 <script> 标签，
 # 否则会和 folium 自己的 <script> 嵌套，导致后面的 JS 被当成文字显示。
 _POI_JSON = json.dumps(poi_rows, ensure_ascii=False, separators=(",", ":"))
+# 搜索选中了某个设施就把地图定位过去（[lat, lon] 或 null）
+_FOCUS = ("[%.6f, %.6f]" % (float(sel_row["纬度"]), float(sel_row["经度"]))
+          if sel_row is not None else "null")
 _JS = r"""
 window.POI = __POIJSON__;
+window.FOCUS = __FOCUS__;
 window.POI_COLOR = {"宜居": "#2f7d5d", "宜业": "#2f5f9e", "宜乐": "#b96a1b"};
 window.POI_GLYPH = {"宜居": "居", "宜业": "业", "宜乐": "乐"};
 
@@ -458,6 +481,7 @@ function wgs84ToGcj02(lng, lat) {
     clearInterval(t);
     // 再保险一次：滚动页面时不要被地图抢走滚轮
     if (map.scrollWheelZoom) { map.scrollWheelZoom.disable(); }
+    var focusMarker = null;
     window.POI.forEach(function (p) {
       var c = window.POI_COLOR[p.g] || "#5b6673";
       var ico = L.divIcon({
@@ -482,9 +506,18 @@ function wgs84ToGcj02(lng, lat) {
       h += '<a class="pb" href="' + u + '" data-lon="' + p.x + '" data-lat="' + p.y +
            '" data-nm="' + p.n.replace(/"/g, '&quot;') +
            '" onclick="return jumpAmap(this);">导航到这里</a></div>';
-      L.marker([p.y, p.x], {icon: ico}).addTo(map)
+      var mk = L.marker([p.y, p.x], {icon: ico}).addTo(map)
         .bindPopup(h, {maxWidth: 250}).bindTooltip(p.n);
+      if (window.FOCUS && Math.abs(p.y - window.FOCUS[0]) < 1e-5 &&
+          Math.abs(p.x - window.FOCUS[1]) < 1e-5) {
+        focusMarker = mk;
+      }
     });
+    // 搜索选中了某个设施：直接定位过去并打开它的弹窗
+    if (window.FOCUS) {
+      map.setView(window.FOCUS, 17);
+      if (focusMarker) { setTimeout(function () { focusMarker.openPopup(); }, 350); }
+    }
   }, 120);
 })();
 
@@ -613,20 +646,17 @@ window.jumpAmap = function (el) {
 """
 
 m.get_root().script.add_child(
-    folium.Element(_JS.replace("__POIJSON__", _POI_JSON).replace("__MAPNAME__", m.get_name())))
+    folium.Element(_JS.replace("__POIJSON__", _POI_JSON)
+                        .replace("__FOCUS__", _FOCUS)
+                        .replace("__MAPNAME__", m.get_name())))
 
 # ★ 注意：必须用 get_root().render()，_repr_html_() 返回的是转义后的 HTML（会显示成文字）
 components.html(m.get_root().render(), height=560, scrolling=False)
 
-# ================= 6. 搜索选中的设施卡片（在 iframe 外，导航链接一定能点）=================
-if q.strip():
-    hit = shown[shown["名称"].astype(str).str.contains(q.strip(), na=False)].head(20)
-    if hit.empty:
-        st.markdown('<div class="hint">没有匹配的设施，换个关键词试试。</div>', unsafe_allow_html=True)
-    else:
-        labels = [f"{r['名称']}（{r['主题']}·{r['细分']}）" for _, r in hit.iterrows()]
-        pick = st.selectbox("选择设施", labels, label_visibility="collapsed")
-        row = hit.iloc[labels.index(pick)]
+# ================= 6. 选中的设施卡片（在 iframe 外，导航链接一定能点）=================
+if sel_row is not None:
+    with st.container():
+        row = sel_row
         lon, lat = float(row["经度"]), float(row["纬度"])
         extra, links = "", ""
         for c in EXTRA_COLS:
