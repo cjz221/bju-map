@@ -784,13 +784,30 @@ else:
     bdf, hdf = load()
     cap_by_type = bdf.groupby("类型")["容量"].sum().to_dict()
 
+    # ===== 默认对齐北京时间 =====
+    from datetime import datetime, timedelta, timezone
+
+    NOW_BJ = datetime.now(timezone(timedelta(hours=8)))
+    if "campus_hour" not in st.session_state:
+        st.session_state["campus_hour"] = int(NOW_BJ.hour)
+    if "campus_day" not in st.session_state:
+        st.session_state["campus_day"] = "周末" if NOW_BJ.weekday() >= 5 else "工作日"
+
     c1, c2 = st.columns([1, 1], gap="small")
     with c1:
         st.markdown('<div class="lbl">日期类型</div>', unsafe_allow_html=True)
-        day = st.radio("日期类型", ["工作日", "周末"], horizontal=True, label_visibility="collapsed")
+        day = st.radio("日期类型", ["工作日", "周末"], horizontal=True,
+                       key="campus_day", label_visibility="collapsed")
     with c2:
         st.markdown('<div class="lbl">时刻</div>', unsafe_allow_html=True)
-        hour = st.slider("时刻", 0, 23, 10, format="%d 时", label_visibility="collapsed")
+        hour = st.slider("时刻", 0, 23, format="%d 时", key="campus_hour",
+                         label_visibility="collapsed")
+
+    st.markdown(
+        f'<div class="hint" style="margin:2px 0 6px;">北京时间 <b style="color:#1d5f96;">'
+        f'{NOW_BJ:%H:%M}</b>　已自动定位到 {hour:02d} 时 '
+        f'({"周末" if NOW_BJ.weekday() >= 5 else "工作日"})　拖动可查看其他时段</div>',
+        unsafe_allow_html=True)
 
     cur = hdf[(hdf["星期"] == day) & (hdf["时刻"] == hour)].set_index("功能区")["人数"]
     total = int(cur.sum())
