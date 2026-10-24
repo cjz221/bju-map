@@ -76,7 +76,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei"]
+from matplotlib import font_manager
+
+# 注册服务器中的中文字体
+for font_path in font_manager.findSystemFonts():
+    if "notosanscjk" in font_path.lower():
+        font_manager.fontManager.addfont(font_path)
+
+# 设置图表使用的字体
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = [
+    "Noto Sans CJK JP",
+    "Noto Sans CJK SC",
+    "Microsoft YaHei",
+    "SimHei",
+    "DejaVu Sans",
+]
 plt.rcParams["axes.unicode_minus"] = False
 
 TYPE_COLOR = {"宿舍": "#2f5f9e", "食堂": "#b96a1b", "教学": "#2f7d5d",
